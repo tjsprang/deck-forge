@@ -19,7 +19,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=20261127b">
+<link rel="stylesheet" href="style.css?v=20261127c">
 <script>
   // Apply the saved light/dark choice before the page paints
   try { const t = localStorage.getItem('df.theme'); if (t) document.documentElement.dataset.theme = t; } catch (e) { /* ignore */ }
@@ -94,11 +94,10 @@
       <div class="panel method">
         <div class="method-head"><span class="method-icon"><svg class="i"><use href="#i-camera"/></svg></span><div><h2>Scan a card</h2><p class="hint">Reads the name and number, then matches the artwork</p></div></div>
         <div class="row">
-          <button id="cameraBtn" class="primary"><svg class="i"><use href="#i-camera"/></svg>Camera</button>
-          <button id="bulkBtn" title="Keep the camera running and flip through a stack of cards"><svg class="i"><use href="#i-scan"/></svg>Bulk scan</button>
-          <label class="btn"><svg class="i"><use href="#i-image"/></svg>Photo<input id="photoInput" type="file" accept="image/*" capture="environment" hidden></label>
+          <button id="cameraBtn" class="primary"><svg class="i"><use href="#i-camera"/></svg>Scan with camera</button>
+          <label class="btn"><svg class="i"><use href="#i-image"/></svg>Upload photo<input id="photoInput" type="file" accept="image/*" capture="environment" hidden></label>
         </div>
-        <p class="hint tight">Line the card up in the frame and tap <b>Capture</b> — you can put the card down straight away. <b>Bulk scan</b> keeps scanning as you flip through a stack.</p>
+        <p class="hint tight">Line the card up in the frame and tap <b>Capture</b> — you can put the card down straight away. You choose whether to add it.</p>
       </div>
     </div>
 
@@ -118,20 +117,15 @@
             <li data-step="done"><span class="dot"></span><div><b>Result</b><small></small></div></li>
           </ol>
           <p id="scanTip" class="hint">Hold the card flat, fill the frame, and avoid glare on the number in the bottom corner.</p>
-          <div id="bulkStatus" class="bulk-status" hidden></div>
+          <!-- The identified card, with explicit Add buttons (nothing is added automatically) -->
+          <div id="scanResult" class="scan-result" hidden></div>
           <div class="row scan-buttons">
             <button id="captureBtn" class="primary big"><svg class="i"><use href="#i-camera"/></svg>Capture</button>
-            <button id="scanAgainBtn" class="primary big" hidden><svg class="i"><use href="#i-camera"/></svg>Scan another</button>
+            <button id="scanAgainBtn" class="big" hidden><svg class="i"><use href="#i-camera"/></svg>Scan another</button>
             <button id="stopCamBtn" class="big"><svg class="i"><use href="#i-x"/></svg>Close</button>
           </div>
         </div>
       </div>
-    </div>
-
-    <div id="bulkPanel" class="panel bulk-panel" hidden>
-      <div class="panel-title"><h2>Bulk scan</h2><span id="bulkCounts" class="hint"></span></div>
-      <h3 class="sub">Added</h3><div id="bulkAdded" class="bulk-list"></div>
-      <h3 class="sub">Needs review</h3><div id="bulkReview" class="bulk-review"></div>
     </div>
 
     <div id="resultsStatus" class="status"></div>
@@ -229,14 +223,14 @@
 
 <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
-<script src="cards.js?v=20261127b"></script>
-<script src="engine.js?v=20261127b"></script>
-<script src="sim.js?v=20261127b"></script>
-<script src="sample.js?v=20261127b"></script>
-<script src="scanner.js?v=20261127b"></script>
-<script src="meta.js?v=20261127b"></script>
-<script src="matchup.js?v=20261127b"></script>
-<script src="upgrade.js?v=20261127b"></script>
-<script src="app.js?v=20261127b"></script>
+<script src="cards.js?v=20261127c"></script>
+<script src="engine.js?v=20261127c"></script>
+<script src="sim.js?v=20261127c"></script>
+<script src="sample.js?v=20261127c"></script>
+<script src="scanner.js?v=20261127c"></script>
+<script src="meta.js?v=20261127c"></script>
+<script src="matchup.js?v=20261127c"></script>
+<script src="upgrade.js?v=20261127c"></script>
+<script src="app.js?v=20261127c"></script>
 </body>
 </html>

@@ -224,11 +224,10 @@ async function startCamera() {
   } catch (err) { setStatus($('#resultsStatus'), 'Camera blocked: ' + esc(err.message), true); return false; }
 }
 $('#cameraBtn').addEventListener('click', () => {
-  stopBulk();
   $('#results').innerHTML = ''; setStatus($('#resultsStatus'), '');
   startCamera().then(ok => { if (ok) $('#scanner').scrollIntoView({ behavior: 'smooth', block: 'start' }); });
 });
-function stopCamera() { stopBulk(); if (stream) stream.getTracks().forEach(t => t.stop()); stream = null; $('#scanner').hidden = true; }
+function stopCamera() { if (stream) stream.getTracks().forEach(t => t.stop()); stream = null; $('#scanner').hidden = true; }
 $('#stopCamBtn').addEventListener('click', stopCamera);
 
 // The viewfinder is a portrait box the camera picture fills (object-fit: cover). The card frame
@@ -275,7 +274,6 @@ function grabFrame() {
   crop.getContext('2d').drawImage(full, sx, sy, sw, sh, 0, 0, crop.width, crop.height);
   return { full, crop };
 }
-function captureFrame() { return grabFrame()?.crop || null; } // used by bulk scan
 
 // How sharp a frame is (variance of the Laplacian): motion blur and focus hunting score low
 function sharpness(canvas) {
@@ -305,10 +303,61 @@ $('#captureBtn').addEventListener('click', async () => {
   for (const s of shots) { const v = sharpness(s.crop); if (v > bestS) { bestS = v; best = s; } }
   showFrozen(best.full);
   try { navigator.vibrate?.(30); } catch (e) { /* ignore */ }
-  await recognizeCard(best.crop, { steps: true });
+  await recognizeCard(best.crop, { steps: true, fromCamera: true });
   $('#scanAgainBtn').hidden = false;
 });
-$('#scanAgainBtn').addEventListener('click', () => { if (stream) showLive(); else startCamera(); $('#results').innerHTML = ''; setStatus($('#resultsStatus'), ''); });
+function scanAnother() { if (stream) showLive(); else startCamera(); $('#results').innerHTML = ''; setStatus($('#resultsStatus'), ''); }
+$('#scanAgainBtn').addEventListener('click', scanAnother);
+
+// The identified card, shown in the scanner with explicit buttons — nothing is added
+// to the collection unless you tap one.
+function renderScanResult(res, fromCamera) {
+  const box = $('#scanResult');
+  const c = res?.results?.[0];
+  if (!c) { box.hidden = true; return; }
+  const own = Collection.data.qty[c.id] || 0;
+  const img = cardImage(c);
+  const others = res.results.length - 1;
+  box.dataset.id = c.id;
+  box.innerHTML = `
+    <div class="sr-card">
+      ${img ? `<img src="${esc(img)}" alt="" data-sr="zoom">` : ''}
+      <div class="sr-info">
+        <span class="sr-label ${res.confident ? 'ok' : 'check'}">${res.confident ? 'Match found' : 'Most likely — please check'}</span>
+        <b>${esc(c.name)}</b>
+        <span>${esc(c.setName)} · ${esc(c.localId)}${c.setTotal ? '/' + c.setTotal : ''}</span>
+        <span class="sr-own" id="srOwn">${own ? `You own ${own}` : 'Not in your collection yet'}</span>
+      </div>
+    </div>
+    <div class="sr-actions">
+      <button class="primary big" data-sr="add"><svg class="i"><use href="#i-add"/></svg><span>Add to collection</span></button>
+      ${fromCamera ? `<button class="big" data-sr="addnext"><svg class="i"><use href="#i-camera"/></svg>Add &amp; scan next</button>` : ''}
+    </div>
+    ${others ? `<button class="sr-others" data-sr="others">Not this card? See ${others} other possible match${others === 1 ? '' : 'es'} ↓</button>` : ''}`;
+  box.hidden = false;
+}
+$('#scanResult').addEventListener('click', e => {
+  const b = e.target.closest('[data-sr]');
+  if (!b) return;
+  const card = lastResults.find(c => c.id === $('#scanResult').dataset.id);
+  if (!card) return;
+  const act = b.dataset.sr;
+  if (act === 'zoom') return openCard(card);
+  if (act === 'others') return $('#resultsStatus').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  if (act === 'add' || act === 'addnext') {
+    Collection.add(card, 1);
+    updateCount();
+    const own = Collection.data.qty[card.id];
+    toast(`Added ${card.name} — you own ${own}`);
+    $('#srOwn').textContent = `You own ${own}`;
+    const addBtn = $('#scanResult [data-sr="add"] span');
+    if (addBtn) addBtn.textContent = 'Add another copy';
+    // keep the tile in the list below in sync
+    const tile = document.querySelector(`#results .card[data-id="${CSS.escape(card.id)}"]`);
+    if (tile) { const best = tile.classList.contains('best'); tile.outerHTML = cardTile(card, 'results'); if (best) document.querySelector(`#results .card[data-id="${CSS.escape(card.id)}"]`)?.classList.add('best'); }
+    if (act === 'addnext') scanAnother();
+  }
+});
 
 function showFrozen(canvasFull, { photo = false } = {}) {
   const snap = $('#snapshot');
@@ -320,16 +369,23 @@ function showFrozen(canvasFull, { photo = false } = {}) {
   $('#captureBtn').hidden = true;
   $('#scanAgainBtn').hidden = true;
   $('#scanTip').hidden = true;
+  $('#scanResult').hidden = true;
   resetSteps(true);
+  // On a phone the frozen picture shrinks so the steps and result fit on screen
+  $('#scanner').classList.add('analysing');
+  setTimeout(() => $('#scanner').scrollIntoView({ behavior: 'smooth', block: 'start' }), 60);
 }
 function showLive() {
   $('#snapshot').hidden = true;
   $('#videoWrap').classList.remove('photo');
   if (stream) $('#video').play().catch(() => {});
-  $('#captureBtn').hidden = !!bulk?.running;
+  $('#captureBtn').hidden = false;
   $('#scanAgainBtn').hidden = true;
   $('#scanTip').hidden = false;
+  $('#scanResult').hidden = true;
+  $('#scanner').classList.remove('analysing');
   resetSteps(false);
+  placeGuide();
 }
 function resetSteps(show) {
   const ol = $('#scanSteps');
@@ -348,104 +404,8 @@ function setStep(key, state, detail) {
   if (detail != null) li.querySelector('small').textContent = detail;
 }
 
-// ---------- Bulk scan: keep scanning, auto-add sure matches, queue unsure ones ----------
-let bulk = null;
-$('#bulkBtn').addEventListener('click', async () => {
-  warmScanner();
-  if (!(await startCamera())) return;
-  if (bulk?.running) return;
-  bulk = { running: true, added: [], review: [], lastSig: null };
-  $('#bulkPanel').hidden = false;
-  $('#bulkStatus').hidden = false;
-  $('#captureBtn').hidden = true;
-  renderBulk();
-  bulkLoop();
-});
-function stopBulk() {
-  if (!bulk) return;
-  bulk.running = false;
-  $('#bulkStatus').hidden = true;
-  $('#captureBtn').hidden = false;
-}
 const sleep = ms => new Promise(r => setTimeout(r, ms));
-function frameIsEmpty(c) {
-  // Nothing in front of the camera: a flat, low-detail frame
-  const s = document.createElement('canvas'); s.width = 32; s.height = 44;
-  const x = s.getContext('2d', { willReadFrequently: true });
-  x.drawImage(c, 0, 0, 32, 44);
-  const d = x.getImageData(0, 0, 32, 44).data;
-  let sum = 0, sq = 0, n = 0;
-  for (let i = 0; i < d.length; i += 4) { const g = (d[i] + d[i + 1] + d[i + 2]) / 3; sum += g; sq += g * g; n++; }
-  const sd = Math.sqrt(sq / n - (sum / n) ** 2);
-  return sd < 18;
-}
-async function bulkLoop() {
-  const status = msg => { $('#bulkStatus').textContent = msg; };
-  status('Hold up the first card inside the frame…');
-  while (bulk?.running && stream) {
-    await sleep(450);
-    const frame = captureFrame();
-    if (!frame) continue;
-    if (frameIsEmpty(frame)) { bulk.lastSig = null; status('Ready — show the next card'); continue; }
-    const sig = signature(frame);
-    // Same card still in view? Wait for the next one (a card counts once until it's swapped)
-    if (bulk.lastSig && visualSimilarity(sig, bulk.lastSig) > 0.72) { status('Got it — swap to the next card'); continue; }
-    // Wait for the image to settle (the card is still moving)
-    await sleep(250);
-    const frame2 = captureFrame();
-    if (!frame2 || visualSimilarity(signature(frame2), sig) < 0.75) continue;
-    status('Reading card…');
-    try {
-      const res = await Scanner.identify(frame2, s => status(s));
-      bulk.lastSig = signature(frame2);
-      if (!res.results.length) { status('Couldn’t read that one — tilt away from glare or swap cards'); continue; }
-      if (res.confident) {
-        const card = res.results[0];
-        Collection.add(card, 1);
-        bulk.added.unshift({ card, at: Date.now() });
-        updateCount();
-        status(`Added ${card.name} (${card.setName}) — next card`);
-        try { navigator.vibrate?.(60); } catch (e) { /* ignore */ }
-      } else {
-        const thumb = document.createElement('canvas');
-        thumb.width = 120; thumb.height = Math.round(120 * frame2.height / frame2.width);
-        thumb.getContext('2d').drawImage(frame2, 0, 0, thumb.width, thumb.height);
-        bulk.review.push({ id: 'r' + Date.now(), photo: thumb.toDataURL('image/jpeg', 0.7), options: res.results.slice(0, 5) });
-        status('Not sure about that one — added to the review pile. Next card');
-      }
-      renderBulk();
-    } catch (err) { status('Scan error: ' + err.message); await sleep(1500); }
-  }
-}
-function renderBulk() {
-  if (!bulk) return;
-  $('#bulkCounts').textContent = `${bulk.added.length} added · ${bulk.review.length} to review`;
-  $('#bulkAdded').innerHTML = bulk.added.length ? bulk.added.slice(0, 40).map((a, i) => `<span class="chip">${esc(a.card.name)} <small>${esc(CardDB.setCode(a.card.setId))} ${esc(a.card.localId)}</small><button data-undo="${i}" title="Undo">×</button></span>`).join('') : '<span class="hint">Nothing yet.</span>';
-  $('#bulkReview').innerHTML = bulk.review.length ? bulk.review.map(r => `<div class="review-item" data-r="${r.id}">
-      <img class="photo" src="${r.photo}" alt="Your photo">
-      <div class="opts">${r.options.map((c, k) => `<button class="opt" data-pick="${k}" title="${esc(c.name)} · ${esc(c.setName)}">${cardImage(c) ? `<img src="${esc(cardImage(c))}" alt="">` : ''}<span>${esc(c.name)}<br><small>${esc(c.setName)} ${esc(c.localId)}</small></span></button>`).join('')}
-        <button data-skip="1">None of these</button></div></div>`).join('') : '<span class="hint">Nothing to review.</span>';
-}
-$('#bulkPanel').addEventListener('click', e => {
-  const undo = e.target.closest('[data-undo]');
-  if (undo) {
-    const a = bulk.added.splice(+undo.dataset.undo, 1)[0];
-    if (a) { Collection.add(a.card, -1); updateCount(); toast(`Removed ${a.card.name}`); }
-    return renderBulk();
-  }
-  const item = e.target.closest('.review-item');
-  if (!item) return;
-  const idx = bulk.review.findIndex(r => r.id === item.dataset.r);
-  if (idx < 0) return;
-  const pick = e.target.closest('[data-pick]');
-  if (pick) {
-    const card = bulk.review[idx].options[+pick.dataset.pick];
-    Collection.add(card, 1); updateCount();
-    bulk.added.unshift({ card, at: Date.now() });
-    toast(`Added ${card.name}`);
-  }
-  if (pick || e.target.closest('[data-skip]')) { bulk.review.splice(idx, 1); renderBulk(); }
-});
+
 $('#photoInput').addEventListener('change', e => {
   const f = e.target.files[0];
   if (!f) return;
@@ -457,17 +417,17 @@ $('#photoInput').addEventListener('change', e => {
     c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
     URL.revokeObjectURL(img.src);
     // Same step-by-step view as the camera, showing the uploaded photo
-    stopBulk();
     $('#scanner').hidden = false;
     showFrozen(c, { photo: true });
-    await recognizeCard(c, { steps: true });
+    $('#scanner').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    await recognizeCard(c, { steps: true, fromCamera: false });
     $('#scanAgainBtn').hidden = false;
   };
   img.src = URL.createObjectURL(f);
   e.target.value = '';
 });
 
-async function recognizeCard(canvas, { steps = false } = {}) {
+async function recognizeCard(canvas, { steps = false, fromCamera = false } = {}) {
   const status = $('#resultsStatus');
   setStatus(status, steps ? '' : spin('Reading card…'));
   $('#results').innerHTML = '';
@@ -484,10 +444,16 @@ async function recognizeCard(canvas, { steps = false } = {}) {
     }
     lastResults = res.results;
     const n = res.results.length;
-    setStatus(status, (res.confident ? '<b>Best match first.</b> ' : `${n} possible printings, most likely first. `) + `Read ${esc(what)}. Tap +1 on the right one.`);
     $('#results').innerHTML = res.results.map(c => cardTile(c, 'results')).join('');
     if (res.confident) $('#results .card')?.classList.add('best');
-    if (steps) setTimeout(() => $('#resultsStatus').scrollIntoView({ behavior: 'smooth', block: 'start' }), 250);
+    if (steps) {
+      // The answer appears in the scanner with Add buttons; the full list stays below
+      renderScanResult(res, fromCamera);
+      setTimeout(() => $('#scanResult').scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 80);
+      setStatus(status, n > 1 ? `All ${n} possible matches (read ${esc(what)}) — tap + on a different one if the scanner picked wrong.` : '');
+    } else {
+      setStatus(status, (res.confident ? '<b>Best match first.</b> ' : `${n} possible printings, most likely first. `) + `Read ${esc(what)}. Tap +1 on the right one.`);
+    }
   } catch (err) {
     if (steps) setStep('done', 'fail', err.message);
     setStatus(status, esc(err.message), true);

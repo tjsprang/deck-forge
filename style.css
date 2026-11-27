@@ -242,6 +242,19 @@ button:disabled { opacity: .55; cursor: default; transform: none; }
 .video-wrap video, .video-wrap #snapshot { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
 .video-wrap.photo #snapshot { object-fit: contain; background: #111; }
 .video-wrap.photo .card-guide { display: none; }
+.scan-result { border: 1px solid var(--line); border-radius: 12px; padding: 12px; background: var(--surface-2); display: flex; flex-direction: column; gap: 12px; }
+.sr-card { display: flex; gap: 12px; align-items: center; }
+.sr-card img { width: 72px; border-radius: 5px; box-shadow: var(--shadow); cursor: zoom-in; flex: none; }
+.sr-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; font-size: 13px; color: var(--text-2); }
+.sr-info b { font-size: 17px; color: var(--text); font-weight: 700; }
+.sr-label { font-size: 11px; font-weight: 750; text-transform: uppercase; letter-spacing: .06em; }
+.sr-label.ok { color: var(--good); }
+.sr-label.check { color: var(--warn); }
+.sr-own { font-weight: 600; color: var(--text); }
+.sr-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.sr-actions button { flex: 1 1 160px; }
+.sr-others { background: none; border: 0; box-shadow: none; height: auto; padding: 0; color: var(--info); font-weight: 550; font-size: 13.5px; justify-content: flex-start; }
+.sr-others:hover { background: none; text-decoration: underline; }
 .scan-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
 .scan-steps li { display: flex; gap: 12px; align-items: flex-start; padding: 8px 10px; border-radius: 10px; color: var(--muted); transition: background .2s; }
 .scan-steps li b { display: block; font-weight: 600; font-size: 14px; }
@@ -420,6 +433,10 @@ dialog::backdrop { background: rgba(10, 12, 18, .6); backdrop-filter: blur(3px);
   .add-grid { grid-template-columns: 1fr; gap: 12px; }
   .scan-layout { grid-template-columns: 1fr; gap: 14px; }
   .scanner.panel { padding: 10px; }
+  /* While analysing, a small frozen picture leaves room for the steps and the result */
+  .scanner.analysing .video-wrap { width: 46%; margin: 0 auto; }
+  .scanner.analysing .card-guide { display: none; }
+  .scan-steps li { padding: 6px 8px; }
   .panel { padding: 16px; }
   .card-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
   .card .img { padding: 8px 8px 0; }
