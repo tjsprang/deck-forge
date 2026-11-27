@@ -73,6 +73,7 @@
 
 /* ---------- Base ---------- */
 *, *::before, *::after { box-sizing: border-box; }
+[hidden] { display: none !important; }
 html { -webkit-text-size-adjust: 100%; }
 body {
   margin: 0; background: var(--bg); color: var(--text);
@@ -222,10 +223,41 @@ button:disabled { opacity: .55; cursor: default; transform: none; }
 .getting-started h3 { color: var(--text); font-size: 17px; font-weight: 700; margin: 10px 0 6px; }
 .getting-started p { max-width: 460px; margin: 0 auto; }
 
+/* ---------- Search ---------- */
+.add-grid { grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); }
+.search-tips { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
+.search-tips::before { content: "Try"; color: var(--muted); font-size: 12.5px; align-self: center; margin-right: 2px; }
+.tip { height: 26px; padding: 0 10px; font-size: 12.5px; font-weight: 500; border-radius: 999px; background: var(--surface-2); border-color: var(--line); box-shadow: none; color: var(--text-2); }
+.tip:hover { color: var(--text); border-color: var(--line-strong); }
+
 /* ---------- Scanner ---------- */
 .scanner { margin-top: 16px; }
-.video-wrap { position: relative; max-width: 460px; margin: 0 auto; border-radius: var(--r-lg); overflow: hidden; background: #000; box-shadow: var(--shadow-lg); }
-.video-wrap video { width: 100%; display: block; }
+.scan-layout { display: grid; grid-template-columns: minmax(0, 420px) minmax(0, 1fr); gap: 24px; align-items: start; }
+.scan-side { display: flex; flex-direction: column; gap: 14px; }
+.scan-side .hint { margin: 0; }
+.scan-buttons { gap: 8px; }
+.scan-buttons button { flex: 1 1 auto; }
+/* Portrait viewfinder: the camera picture fills it, the card frame fills most of it */
+.video-wrap { position: relative; width: 100%; aspect-ratio: 3 / 4; border-radius: var(--r-lg); overflow: hidden; background: #000; box-shadow: var(--shadow-lg); }
+.video-wrap video, .video-wrap #snapshot { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
+.video-wrap.photo #snapshot { object-fit: contain; background: #111; }
+.video-wrap.photo .card-guide { display: none; }
+.scan-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.scan-steps li { display: flex; gap: 12px; align-items: flex-start; padding: 8px 10px; border-radius: 10px; color: var(--muted); transition: background .2s; }
+.scan-steps li b { display: block; font-weight: 600; font-size: 14px; }
+.scan-steps li small { display: block; color: var(--muted); font-size: 12.5px; min-height: 1em; }
+.scan-steps .dot { flex: none; width: 22px; height: 22px; margin-top: 1px; border-radius: 50%; border: 2px solid var(--line-strong); position: relative; }
+.scan-steps li.active { background: var(--surface-2); color: var(--text); }
+.scan-steps li.active .dot { border-color: var(--line-strong); border-top-color: var(--accent); animation: spin .7s linear infinite; }
+.scan-steps li.done, .scan-steps li.weak { color: var(--text); }
+.scan-steps li.done .dot { border-color: var(--good); background: var(--good); }
+.scan-steps li.done .dot::after, .scan-steps li.weak .dot::after { content: ""; position: absolute; left: 6px; top: 2px; width: 5px; height: 10px; border: solid #fff; border-width: 0 2px 2px 0; transform: rotate(45deg); }
+.scan-steps li.weak .dot { border-color: var(--warn); background: var(--warn); }
+.scan-steps li.weak .dot::after { content: "!"; border: 0; transform: none; left: 0; right: 0; top: 0; text-align: center; width: auto; height: auto; font: 800 12px/18px var(--font); color: #fff; }
+.scan-steps li.fail .dot { border-color: var(--bad); background: var(--bad); }
+.scan-steps li.fail .dot::after { content: "×"; position: absolute; inset: 0; text-align: center; font: 800 14px/18px var(--font); color: #fff; }
+.scan-steps li.fail { color: var(--bad); }
+.scan-steps li.done small, .scan-steps li.weak small { color: var(--text-2); }
 .card-guide { position: absolute; left: 28%; top: 7%; width: 44%; height: 86%; border: 2px solid rgba(255, 255, 255, .9); border-radius: 4.5% / 3.2%; pointer-events: none; box-shadow: 0 0 0 999px rgba(0, 0, 0, .45); }
 .card-guide::after { content: "Fill this frame with the card"; position: absolute; left: 50%; top: 8px; transform: translateX(-50%); white-space: nowrap; color: #fff; font-size: 12px; font-weight: 600; text-shadow: 0 1px 3px rgba(0, 0, 0, .8); }
 .bulk-status { text-align: center; font-weight: 650; margin: 12px 0 0; }
@@ -386,6 +418,8 @@ dialog::backdrop { background: rgba(10, 12, 18, .6); backdrop-filter: blur(3px);
   .toolbar.filters .search-field { grid-column: 1 / -1; }
   .toolbar.filters select { width: 100%; min-width: 0; padding: 0 24px 0 10px; font-size: 13.5px; background-position: right 6px center; }
   .add-grid { grid-template-columns: 1fr; gap: 12px; }
+  .scan-layout { grid-template-columns: 1fr; gap: 14px; }
+  .scanner.panel { padding: 10px; }
   .panel { padding: 16px; }
   .card-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
   .card .img { padding: 8px 8px 0; }

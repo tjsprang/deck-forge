@@ -107,31 +107,44 @@ const Scanner = {
   async readNumber(canvas) {
     const { digits } = await this.getWorkers();
     const scale = 2400 / canvas.width;
+    // Tight strips around just the number line read far better than a wide strip that also
+    // holds the illustrator credit and flavour text. A few heights cover small framing offsets.
     const crops = [
-      [0, 0.88, 0.55, 0.12],    // modern: bottom-left
-      [0.45, 0.88, 0.55, 0.12], // older: bottom-right
-      [0, 0.84, 1, 0.16],
+      [0, 0.895, 0.38, 0.065], [0, 0.88, 0.38, 0.065], [0, 0.91, 0.38, 0.065], // modern: bottom-left
+      [0.6, 0.9, 0.4, 0.08], [0.6, 0.875, 0.4, 0.08],                         // older: bottom-right
+      [0, 0.88, 0.55, 0.12], [0.45, 0.88, 0.55, 0.12], [0, 0.84, 1, 0.16],   // wider fallbacks
     ];
+    // A read only counts if its set size is a real set size ("021/103" yes, "621/208" no)
+    const totals = new Set((CardDB.sets || []).map(s => s.cardCount?.official).filter(Boolean));
+    let fallback = null;
     for (const [x, y, w, h] of crops) {
-      for (const variant of ['bw', 'plain']) {
+      for (const variant of ['plain', 'bw']) {
         const r = await digits.recognize(prepCrop(canvas, x, y, w, h, scale, variant));
         const num = parseCollectorNumber(r.data.text);
-        if (num) return num;
+        if (!num) continue;
+        if (!num.total || totals.has(num.total)) return num;
+        fallback = fallback || num;
       }
     }
-    return null;
+    return fallback;
   },
 
   // ---------- Main entry ----------
+  // onStep(text, { step, state, detail }) reports progress through the stages:
+  //   name -> number -> match (possible cards) -> art (artwork check) -> done
   async identify(photo, onStep = () => {}) {
-    onStep('Loading the card list…');
+    const step = (key, state, detail, text) => onStep(text || detail || '', { step: key, state, detail });
+    onStep('Loading the card list…', { step: 'prep', state: 'active' });
     await Promise.all([this.loadIndex(), CardDB.loadSets()]);
     const found = locateCard(photo);
     const canvas = found.canvas;
-    onStep('Reading the name…');
+    step('name', 'active', 'Reading…', 'Reading the card name…');
     const names = await this.readName(canvas);
-    onStep('Reading the card number…');
+    step('name', names[0] && names[0].score >= 0.6 ? 'done' : 'weak', names[0] && names[0].score >= 0.6 ? names[0].entry.name : 'Not clear — will rely on the number and artwork');
+    step('number', 'active', 'Reading…', 'Reading the card number…');
     const num = await this.readNumber(canvas);
+    step('number', num ? 'done' : 'weak', num ? num.text : 'Not readable');
+    step('match', 'active', 'Searching…', 'Finding possible cards…');
     const idx = this.index;
     const words = this.lastWords || [];
 
@@ -189,14 +202,19 @@ const Scanner = {
         if (pool.length && pool.length <= 60) cands = pool;
       }
     }
-    if (!cands.length) return { names, num, results: [], cropped: found.method };
+    if (!cands.length) {
+      step('match', 'fail', 'No matching cards');
+      return { names, num, results: [], cropped: found.method };
+    }
+    const nNames = new Set(cands.map(c => c.name)).size;
+    step('match', 'done', `${cands.length} possible printing${cands.length === 1 ? '' : 's'}${nNames > 1 ? ` of ${nNames} cards` : ` of ${cands[0].name}`}${byNumber ? ' (by number)' : ''}`);
 
     // Visual ranking when more than one printing is left
     if (cands.length > 1) {
       const MAX = 100;
       cands.sort((a, b) => b.nameScore - a.nameScore);
       const limited = cands.filter(c => c.hasImg).slice(0, MAX);
-      onStep(`Comparing the artwork with ${limited.length} printings…`);
+      step('art', 'active', `Comparing with ${limited.length} card picture${limited.length === 1 ? '' : 's'}…`);
       const photoSigs = signatureVariants(canvas);
       await mapLimit(limited, 8, async c => {
         try {
@@ -211,9 +229,11 @@ const Scanner = {
       // Among number matches the name text is real evidence, so it weighs more
       const w = byNumber ? 0.5 : 0.1;
       cands.sort((a, b) => (b.visual + b.nameScore * w) - (a.visual + a.nameScore * w));
-    }
+      const lead = cands[1] ? cands[0].visual - cands[1].visual : 1;
+      step('art', 'done', lead > 0.06 ? 'Clear artwork match' : 'Close call between printings');
+    } else step('art', 'done', 'Only one possible card');
 
-    onStep('Loading card details…');
+    onStep('Loading card details…', { step: 'done', state: 'active', detail: 'Loading…' });
     const top = cands.slice(0, 12);
     const full = (await Promise.all(top.map(c => CardDB.getCard(c.id).catch(() => null)))).filter(Boolean);
     if (!full.length) throw new Error('Found the card but the card database is busy — try again in a few seconds.');
@@ -230,6 +250,7 @@ const Scanner = {
     if (byNumber && top[0].nameScore >= 0.6 && (!top[1] || top[0].nameScore - top[1].nameScore > 0.2)) confident = true;
     // Report the name that was actually matched (the number path may have overruled the name read)
     const readName = byNumber ? (top[0].nameScore >= 0.45 ? top[0].name : null) : names[0]?.entry.name;
+    step('done', confident ? 'done' : 'weak', confident ? `${full[0].name} · ${full[0].setName} ${full[0].localId}` : `${full.length} likely card${full.length === 1 ? '' : 's'} — pick the right one`);
     return { names, num, readName, byNumber, results: full, confident, visual: top.map(c => c.visual), cropped: found.method };
   },
   sigCache: new Map(),

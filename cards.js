@@ -77,9 +77,10 @@ function normalizeCard(c) {
     setId: c.set?.id || '',
     setName: c.set?.name || '',
     setTotal: c.set?.cardCount?.official || 0,
-    attacks: (c.attacks || []).map(a => ({ name: a.name, cost: a.cost || [], damage: a.damage == null ? '' : String(a.damage), effect: a.effect || '' })),
-    abilities: (c.abilities || []).map(a => ({ name: a.name, effect: a.effect || '', type: a.type })),
-    weaknesses: c.weaknesses || [],
+    // (some database entries contain empty slots in these lists — skip them)
+    attacks: (c.attacks || []).filter(Boolean).map(a => ({ name: a.name || '', cost: (a.cost || []).filter(Boolean), damage: a.damage == null ? '' : String(a.damage), effect: a.effect || '' })),
+    abilities: (c.abilities || []).filter(Boolean).map(a => ({ name: a.name || '', effect: a.effect || '', type: a.type })),
+    weaknesses: (c.weaknesses || []).filter(Boolean),
   });
 }
 

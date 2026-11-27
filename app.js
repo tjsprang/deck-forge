@@ -109,40 +109,82 @@ function openCard(card) {
 $('#cardModal').addEventListener('click', e => { if (e.target.id === 'cardModal') $('#cardModal').close(); });
 
 // ---------- Search ----------
+// One search box that understands:
+//   "arcanine"            every printing of a card name
+//   "arcanine 109"        that card with collector number 109 (any set)
+//   "arcanine 109/123"    ...and a set of 123 cards (exactly one printing, usually)
+//   "109/123"             any card numbered 109 in a 123-card set
+//   "OBF 125", "sv03 125" a set code (or set name) plus number
+//   "TG05", "SWSH050"     letter-prefixed numbers work too
 $('#searchForm').addEventListener('submit', async e => {
   e.preventDefault();
-  const q = $('#searchInput').value.trim();
+  const q = $('#searchInput').value.trim().replace(/\s+/g, ' ');
   if (!q) return;
-  setStatus($('#resultsStatus'), spin(`Searching for "${q}"…`));
-  $('#results').innerHTML = '';
-  try {
-    const cards = await CardDB.searchByName(q, { standardOnly: $('#standardOnly').checked });
-    showResults(cards, `printings matching "${q}" (newest first)`);
-  } catch (err) { setStatus($('#resultsStatus'), 'Search failed: ' + esc(err.message), true); }
-});
-
-$('#numberForm').addEventListener('submit', async e => {
-  e.preventDefault();
-  const raw = $('#numberInput').value.trim();
-  setStatus($('#resultsStatus'), spin('Looking up card…'));
+  const standardOnly = $('#standardOnly').checked;
+  const status = $('#resultsStatus');
+  setStatus(status, spin(`Searching for "${q}"…`));
   $('#results').innerHTML = '';
   try {
     await CardDB.loadSets();
-    let m = raw.match(/^(\d{1,3})\s*\/\s*(\d{1,3})$/);
-    let cards = [];
-    if (m) cards = await CardDB.searchByNumber(m[1], { total: m[2] });
-    else if ((m = raw.match(/^(.+?)[\s-]+([A-Za-z]{0,3}\d{1,3}[a-z]?)$/))) {
-      const sets = CardDB.findSet(m[1]);
-      if (!sets.length) throw new Error(`Unknown set "${m[1]}". Try the code printed on the card (e.g. OBF, PAL, TWM) or the set name.`);
-      for (const s of sets.slice(0, 5)) {
-        const c = await CardDB.searchByNumber(m[2].replace(/^\D+/, '') || m[2], { setId: s.id });
-        cards.push(...c);
-      }
-    } else if (/^\d{1,3}$/.test(raw)) cards = await CardDB.searchByNumber(raw);
-    else throw new Error('Use a format like "OBF 125", "sv03 125" or "125/197".');
-    showResults(cards, 'match' + (cards.length === 1 ? '' : 'es'));
-  } catch (err) { setStatus($('#resultsStatus'), esc(err.message), true); }
+    const { cards, label } = await smartSearch(q);
+    const shown = standardOnly ? cards.filter(c => c.legal.standard) : cards;
+    showResults(shown, label + (standardOnly && shown.length < cards.length ? ' (Standard-legal only)' : ''));
+    if (!shown.length) setStatus(status, `No cards found for "${esc(q)}". Check the spelling, or try just the name or just the number (e.g. 109/123).`, true);
+  } catch (err) { setStatus(status, 'Search failed: ' + esc(err.message), true); }
 });
+
+// Example chips under the search box fill it in and search
+document.querySelector('.search-tips').addEventListener('click', e => {
+  const b = e.target.closest('[data-eg]');
+  if (!b) return;
+  $('#searchInput').value = b.dataset.eg;
+  $('#searchForm').requestSubmit();
+});
+
+async function smartSearch(q) {
+  const num = '([A-Za-z]{0,5}\\d{1,3}[a-z]?)';
+  const plural = n => n === 1 ? '' : 's';
+  let m;
+  // "109/123"
+  if ((m = q.match(/^#?(\d{1,3})\s*\/\s*(\d{1,3})$/))) {
+    const cards = await CardDB.searchByNumber(m[1], { total: m[2] });
+    return { cards, label: `card${plural(cards.length)} numbered ${m[1]}/${m[2]}` };
+  }
+  // "<something> 109" or "<something> 109/123"
+  if ((m = q.match(new RegExp(`^(.+?)\\s+#?${num}(?:\\s*/\\s*(\\d{1,3}))?$`)))) {
+    const [, prefix, number, total] = m;
+    const p = prefix.toLowerCase();
+    // A set code or set id ("OBF", "sv03")
+    const exactSets = (CardDB.sets || []).filter(s => s.id.toLowerCase() === p || (s.tcgOnline || '').toLowerCase() === p);
+    if (exactSets.length) return setLookup(exactSets, number, prefix);
+    // Otherwise a card name: all its printings, filtered to that number (and set size)
+    const byName = await CardDB.searchByName(prefix);
+    const hits = byName.filter(c => sameNumber(c.localId, number) && (!total || c.setTotal === +total));
+    if (hits.length) return { cards: hits, label: `${prefix} numbered ${number}${total ? '/' + total : ''}` };
+    // Maybe it was a set name ("Obsidian Flames 125")
+    const namedSets = CardDB.findSet(prefix);
+    if (namedSets.length && namedSets.length <= 5) {
+      const r = await setLookup(namedSets, number, prefix);
+      if (r.cards.length) return r;
+    }
+    // Name found but not that number: show the name's printings so the right one can be picked
+    if (byName.length) return { cards: byName, label: `printings of "${prefix}" — none numbered ${number}${total ? '/' + total : ''}, showing all` };
+    return { cards: [], label: '' };
+  }
+  // Just a number
+  if ((m = q.match(new RegExp(`^#?${num}$`))) && /\d/.test(q)) {
+    const cards = await CardDB.searchByNumber(m[1]);
+    return { cards, label: `card${plural(cards.length)} numbered ${m[1]} — add the name or set size to narrow it down` };
+  }
+  // Just a name
+  const cards = await CardDB.searchByName(q);
+  return { cards, label: `printing${plural(cards.length)} matching "${q}" (newest first)` };
+}
+async function setLookup(sets, number, prefix) {
+  const cards = [];
+  for (const s of sets.slice(0, 5)) cards.push(...await CardDB.searchByNumber(number.replace(/^\D+(?=\d)/, '') || number, { setId: s.id }));
+  return { cards, label: `${prefix.toUpperCase()} ${number}` };
+}
 
 // ---------- Scanner (camera / photo + OCR) ----------
 let stream = null;
@@ -167,54 +209,144 @@ async function startCamera() {
   if (!navigator.mediaDevices?.getUserMedia) { setStatus($('#resultsStatus'), 'Camera not available here. Camera access needs https or localhost — or use Upload photo.', true); return false; }
   try {
     if (!stream) {
-      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } } });
+      // Ask for a high-resolution stream: the collector number is tiny text
+      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { ideal: 2560 }, height: { ideal: 1440 } } });
+      const track = stream.getVideoTracks()[0];
+      try { await track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }); } catch (e) { /* not supported */ }
       $('#video').srcObject = stream;
       await $('#video').play();
     }
     $('#scanner').hidden = false;
+    showLive();
+    placeGuide();
     loadTesseract().catch(() => {});
     return true;
   } catch (err) { setStatus($('#resultsStatus'), 'Camera blocked: ' + esc(err.message), true); return false; }
 }
-$('#cameraBtn').addEventListener('click', () => { stopBulk(); startCamera(); });
+$('#cameraBtn').addEventListener('click', () => {
+  stopBulk();
+  $('#results').innerHTML = ''; setStatus($('#resultsStatus'), '');
+  startCamera().then(ok => { if (ok) $('#scanner').scrollIntoView({ behavior: 'smooth', block: 'start' }); });
+});
 function stopCamera() { stopBulk(); if (stream) stream.getTracks().forEach(t => t.stop()); stream = null; $('#scanner').hidden = true; }
 $('#stopCamBtn').addEventListener('click', stopCamera);
-// The on-screen guide is card-shaped (63 × 88 mm) and sized to the camera frame, which is tall
-// and narrow on a phone held upright and wide on a laptop. The capture crops exactly that box
-// (plus a small margin so the edge finder can tighten it), so the name and number strips land
-// on the card instead of the table above and below it.
+
+// The viewfinder is a portrait box the camera picture fills (object-fit: cover). The card frame
+// is card-shaped (63 × 88 mm) and as wide as the viewfinder allows, so the card fills the
+// picture — the bigger it is, the more readable the tiny collector number. What's inside the
+// frame on screen is exactly what gets analysed.
 const CARD_RATIO = 88 / 63;
-function guideRect(w, h) {
-  let gh = h * 0.86, gw = gh / CARD_RATIO;
-  if (gw > w * 0.86) { gw = w * 0.86; gh = gw * CARD_RATIO; }
-  return { x: (w - gw) / 2, y: (h - gh) / 2, w: gw, h: gh };
+function viewGuide() {
+  const wrap = $('#videoWrap');
+  const W = wrap.clientWidth, H = wrap.clientHeight;
+  let gw = W * 0.9, gh = gw * CARD_RATIO;
+  if (gh > H * 0.94) { gh = H * 0.94; gw = gh / CARD_RATIO; }
+  return { x: (W - gw) / 2, y: (H - gh) / 2, w: gw, h: gh, W, H };
 }
 function placeGuide() {
-  const v = $('#video');
-  if (!v.videoWidth) return;
-  const r = guideRect(v.videoWidth, v.videoHeight);
-  const g = document.querySelector('.card-guide');
-  Object.assign(g.style, {
-    left: (r.x / v.videoWidth * 100) + '%', top: (r.y / v.videoHeight * 100) + '%',
-    width: (r.w / v.videoWidth * 100) + '%', height: (r.h / v.videoHeight * 100) + '%',
+  const g = viewGuide();
+  if (!g.W) return;
+  Object.assign(document.querySelector('.card-guide').style, {
+    left: (g.x / g.W * 100) + '%', top: (g.y / g.H * 100) + '%', width: (g.w / g.W * 100) + '%', height: (g.h / g.H * 100) + '%',
   });
 }
-$('#video').addEventListener('loadedmetadata', placeGuide);
-$('#video').addEventListener('resize', placeGuide);
-function captureFrame() {
+window.addEventListener('resize', placeGuide);
+// Where the on-screen frame sits in the camera's own pixels (cover scaling crops the picture)
+function guideInVideo(vw, vh) {
+  const g = viewGuide();
+  const s = Math.max(g.W / vw, g.H / vh);
+  const ox = (g.W - vw * s) / 2, oy = (g.H - vh * s) / 2;
+  return { x: (g.x - ox) / s, y: (g.y - oy) / s, w: g.w / s, h: g.h / s };
+}
+// One camera frame: the whole picture (to freeze on screen) and the card frame (to analyse)
+function grabFrame() {
   const v = $('#video');
   const w = v.videoWidth, h = v.videoHeight;
   if (!w || !h) return null;
-  const r = guideRect(w, h);
-  const m = 0.04; // margin around the guide
+  const full = document.createElement('canvas');
+  full.width = w; full.height = h;
+  full.getContext('2d').drawImage(v, 0, 0);
+  const r = guideInVideo(w, h);
+  const m = 0.03; // small margin so the edge finder can tighten onto the card
   const sx = Math.max(0, r.x - r.w * m), sy = Math.max(0, r.y - r.h * m);
   const sw = Math.min(w - sx, r.w * (1 + 2 * m)), sh = Math.min(h - sy, r.h * (1 + 2 * m));
-  const c = document.createElement('canvas');
-  c.width = Math.round(sw); c.height = Math.round(sh);
-  c.getContext('2d').drawImage(v, sx, sy, sw, sh, 0, 0, c.width, c.height);
-  return c;
+  const crop = document.createElement('canvas');
+  crop.width = Math.round(sw); crop.height = Math.round(sh);
+  crop.getContext('2d').drawImage(full, sx, sy, sw, sh, 0, 0, crop.width, crop.height);
+  return { full, crop };
 }
-$('#captureBtn').addEventListener('click', () => { const c = captureFrame(); if (c) recognizeCard(c); });
+function captureFrame() { return grabFrame()?.crop || null; } // used by bulk scan
+
+// How sharp a frame is (variance of the Laplacian): motion blur and focus hunting score low
+function sharpness(canvas) {
+  const W = 240, H = Math.round(W * canvas.height / canvas.width);
+  const c = document.createElement('canvas'); c.width = W; c.height = H;
+  const x = c.getContext('2d', { willReadFrequently: true });
+  x.drawImage(canvas, 0, 0, W, H);
+  const d = x.getImageData(0, 0, W, H).data;
+  const g = new Float32Array(W * H);
+  for (let i = 0, p = 0; i < d.length; i += 4, p++) g[p] = (d[i] + d[i + 1] + d[i + 2]) / 3;
+  let sum = 0, sq = 0, n = 0;
+  for (let yy = 1; yy < H - 1; yy++) for (let xx = 1; xx < W - 1; xx++) {
+    const k = yy * W + xx;
+    const l = 4 * g[k] - g[k - 1] - g[k + 1] - g[k - W] - g[k + W];
+    sum += l; sq += l * l; n++;
+  }
+  return sq / n - (sum / n) ** 2;
+}
+
+// Capture: grab a short burst, keep the sharpest frame, freeze it on screen (the card can be put
+// down), then analyse it step by step.
+$('#captureBtn').addEventListener('click', async () => {
+  const shots = [];
+  for (let i = 0; i < 4; i++) { const f = grabFrame(); if (f) shots.push(f); await sleep(110); }
+  if (!shots.length) return;
+  let best = shots[0], bestS = -1;
+  for (const s of shots) { const v = sharpness(s.crop); if (v > bestS) { bestS = v; best = s; } }
+  showFrozen(best.full);
+  try { navigator.vibrate?.(30); } catch (e) { /* ignore */ }
+  await recognizeCard(best.crop, { steps: true });
+  $('#scanAgainBtn').hidden = false;
+});
+$('#scanAgainBtn').addEventListener('click', () => { if (stream) showLive(); else startCamera(); $('#results').innerHTML = ''; setStatus($('#resultsStatus'), ''); });
+
+function showFrozen(canvasFull, { photo = false } = {}) {
+  const snap = $('#snapshot');
+  snap.width = canvasFull.width; snap.height = canvasFull.height;
+  snap.getContext('2d').drawImage(canvasFull, 0, 0);
+  snap.hidden = false;
+  $('#video').pause();
+  $('#videoWrap').classList.toggle('photo', photo);
+  $('#captureBtn').hidden = true;
+  $('#scanAgainBtn').hidden = true;
+  $('#scanTip').hidden = true;
+  resetSteps(true);
+}
+function showLive() {
+  $('#snapshot').hidden = true;
+  $('#videoWrap').classList.remove('photo');
+  if (stream) $('#video').play().catch(() => {});
+  $('#captureBtn').hidden = !!bulk?.running;
+  $('#scanAgainBtn').hidden = true;
+  $('#scanTip').hidden = false;
+  resetSteps(false);
+}
+function resetSteps(show) {
+  const ol = $('#scanSteps');
+  ol.hidden = !show;
+  ol.querySelectorAll('li').forEach(li => { li.className = ''; li.querySelector('small').textContent = ''; });
+}
+function setStep(key, state, detail) {
+  const li = document.querySelector(`#scanSteps li[data-step="${key}"]`);
+  if (!li) return;
+  // Everything before an active step is finished
+  if (state === 'active') {
+    let p = li.previousElementSibling;
+    while (p) { if (!p.className) p.className = 'done'; p = p.previousElementSibling; }
+  }
+  li.className = state;
+  if (detail != null) li.querySelector('small').textContent = detail;
+}
 
 // ---------- Bulk scan: keep scanning, auto-add sure matches, queue unsure ones ----------
 let bulk = null;
@@ -318,34 +450,48 @@ $('#photoInput').addEventListener('change', e => {
   const f = e.target.files[0];
   if (!f) return;
   const img = new Image();
-  img.onload = () => {
-    const scale = Math.min(1, 1600 / Math.max(img.width, img.height));
+  img.onload = async () => {
+    const scale = Math.min(1, 2400 / Math.max(img.width, img.height));
     const c = document.createElement('canvas');
     c.width = img.width * scale; c.height = img.height * scale;
     c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
     URL.revokeObjectURL(img.src);
-    recognizeCard(c);
+    // Same step-by-step view as the camera, showing the uploaded photo
+    stopBulk();
+    $('#scanner').hidden = false;
+    showFrozen(c, { photo: true });
+    await recognizeCard(c, { steps: true });
+    $('#scanAgainBtn').hidden = false;
   };
   img.src = URL.createObjectURL(f);
   e.target.value = '';
 });
 
-async function recognizeCard(canvas) {
+async function recognizeCard(canvas, { steps = false } = {}) {
   const status = $('#resultsStatus');
-  setStatus(status, spin('Reading card…'));
+  setStatus(status, steps ? '' : spin('Reading card…'));
   $('#results').innerHTML = '';
   try {
-    const res = await Scanner.identify(canvas, step => setStatus(status, spin(step)));
+    const res = await Scanner.identify(canvas, (text, info) => {
+      if (steps && info?.step && info.step !== 'prep') setStep(info.step, info.state, info.detail);
+      else if (steps && info?.step === 'prep') setStep('name', 'active', 'Getting ready…');
+      else setStatus(status, spin(text));
+    });
     const what = [res.readName && `name "${res.readName}"`, res.num && `number ${res.num.text}`].filter(Boolean).join(', ') || 'nothing clear';
     if (!res.results.length) {
-      return setStatus(status, `Couldn't identify the card (read ${esc(what)}). Fill the frame with the card, hold it flat to avoid glare, or type the number from the bottom corner (e.g. 033/103) in Set + number.`, true);
+      if (steps) setStep('done', 'fail', 'Couldn’t identify this card');
+      return setStatus(status, `Couldn't identify the card (read ${esc(what)}). Try again with the card filling the frame and no glare on the number — or type it in the search box, e.g. "Raikou 033/103".`, true);
     }
     lastResults = res.results;
     const n = res.results.length;
     setStatus(status, (res.confident ? '<b>Best match first.</b> ' : `${n} possible printings, most likely first. `) + `Read ${esc(what)}. Tap +1 on the right one.`);
     $('#results').innerHTML = res.results.map(c => cardTile(c, 'results')).join('');
     if (res.confident) $('#results .card')?.classList.add('best');
-  } catch (err) { setStatus(status, esc(err.message), true); }
+    if (steps) setTimeout(() => $('#resultsStatus').scrollIntoView({ behavior: 'smooth', block: 'start' }), 250);
+  } catch (err) {
+    if (steps) setStep('done', 'fail', err.message);
+    setStatus(status, esc(err.message), true);
+  }
 }
 
 // ---------- Collection view ----------
