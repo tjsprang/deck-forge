@@ -72,35 +72,39 @@ const Scanner = {
     return this.workers;
   },
 
-  // Find the best-matching real card names in the top strip of the card.
+  // The card name is ALWAYS the big text in the top-left corner, on every era of card (the HP
+  // and type are top-right, "Evolves from …" is small text above or beside it). So only that
+  // area is read — never the attack text, where words like "Energy" would match the wrong card.
   async readName(canvas) {
     const { text } = await this.getWorkers();
     const idx = await this.loadIndex();
     let best = [];
-    const allWords = []; // everything read, used later to pick between printings found by number
-    // Different layouts need different reads: normal text mode first, then sparse mode
-    // (names floating over artwork), black/white, and inverted (white names on dark V/VMAX bars).
-    // Text size matters to the OCR engine, so a couple of passes use a smaller scale.
-    const passes = [['3', 'plain', 0.15, 1400], ['11', 'plain', 0.15, 1400], ['3', 'bw', 0.13, 1400], ['11', 'invert', 0.15, 1400], ['3', 'invert', 0.12, 800], ['6', 'plain', 0.1, 900]];
-    for (const [psm, variant, h, width] of passes) {
+    const allWords = []; // what was read here; later used to pick between printings found by number
+    // The OCR engine reads text best when letters are ~30–60 px tall, and a name is ~4.5% of the
+    // card's height — so scale the crop to put the name at a few target heights instead of
+    // whatever size the photo happens to be (huge text reads badly too).
+    const nameHeight = canvas.height * 0.045;
+    // Name strip (top-left), a looser version, and the full top strip — some layouts (V, VSTAR,
+    // VMAX) put a stage tab and portrait left of the name, which can blur together in a tight crop.
+    // Still only the top ~15% of the card: never the attack text.
+    const region = [[0, 0.015, 0.72, 0.125], [0, 0, 0.78, 0.16], [0, 0, 1, 0.15]];
+    const passes = [
+      // [region, target text height px, image variant, page mode]
+      [0, 46, 'plain', '6'], [2, 70, 'plain', '3'], [0, 46, 'invert', '6'], [2, 70, 'invert', '3'],
+      [0, 34, 'plain', '6'], [2, 90, 'plain', '3'], [0, 62, 'plain', '6'], [1, 46, 'plain', '11'],
+      [0, 46, 'bw', '6'], [2, 70, 'bw', '3'], [0, 28, 'plain', '7'],
+    ];
+    for (const [ri, target, variant, psm] of passes) {
+      const [x, y, w, h] = region[ri];
       await text.setParameters({ tessedit_pageseg_mode: psm });
-      const r = await text.recognize(prepCrop(canvas, 0, 0, 1, h, width / canvas.width, variant));
-      const words = (r.data.words || []).map(w => ({ t: w.text, h: w.bbox.y1 - w.bbox.y0, conf: w.confidence }))
-        .filter(w => /[A-Za-zÀ-ÿ]{2,}/.test(w.t));
+      const r = await text.recognize(prepCrop(canvas, x, y, w, h, target / nameHeight, variant));
+      const words = (r.data.words || []).map(wd => ({ t: wd.text, h: wd.bbox.y1 - wd.bbox.y0, conf: wd.confidence }))
+        .filter(wd => /[A-Za-zÀ-ÿ]{2,}/.test(wd.t));
       allWords.push(...words);
       best = mergeMatches(best, matchNames(words, idx));
-      if (best[0] && best[0].score > 0.88) break;
+      if (best[0] && best[0].score > 0.85) break;
     }
     this.lastWords = allWords;
-    if (!best.length || best[0].score < 0.6) {
-      // Unusual layout (full art, name lower down): read the whole card; the name is
-      // still the biggest text, which matchNames prefers.
-      await text.setParameters({ tessedit_pageseg_mode: '11' });
-      const r = await text.recognize(prepCrop(canvas, 0, 0, 1, 1, 1000 / canvas.width, 'plain'));
-      const words = (r.data.words || []).map(w => ({ t: w.text, h: w.bbox.y1 - w.bbox.y0 })).filter(w => /[A-Za-zÀ-ÿ]{2,}/.test(w.t));
-      allWords.push(...words);
-      best = mergeMatches(best, matchNames(words, idx).map(m => ({ ...m, score: m.score - 0.05 })));
-    }
     return best.slice(0, 4);
   },
 
@@ -184,6 +188,10 @@ const Scanner = {
       for (const e of idx.byName.values()) if (e !== n.entry && re.test(e.key)) addEntry(e, n.score - 0.1);
     }
 
+    // The set size ("/197") is often read correctly even when the card number's digits aren't —
+    // and printings of the same card in other sets (reprints) have different set sizes.
+    if (num?.total && !byNumber) for (const c of cands) c.totalHit = setTotalOf(c.id) === num.total;
+
     // Number without a readable set size (or no match above): use it to filter the name's printings
     if (num && !byNumber) {
       const byNum = cands.filter(c => sameNumber(c.localId, num.number));
@@ -228,7 +236,8 @@ const Scanner = {
       cands = [...limited, ...noImg];
       // Among number matches the name text is real evidence, so it weighs more
       const w = byNumber ? 0.5 : 0.1;
-      cands.sort((a, b) => (b.visual + b.nameScore * w) - (a.visual + a.nameScore * w));
+      const score = c => c.visual + c.nameScore * w + (c.totalHit ? 0.08 : 0); // set size matched
+      cands.sort((a, b) => score(b) - score(a));
       const lead = cands[1] ? cands[0].visual - cands[1].visual : 1;
       step('art', 'done', lead > 0.06 ? 'Clear artwork match' : 'Close call between printings');
     } else step('art', 'done', 'Only one possible card');
@@ -444,10 +453,19 @@ function matchNames(words, idx) {
   const shortlist = [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 300).map(x => x[0]);
   const scored = shortlist.map(entry => {
     let best = 0;
+    const keyLetters = entry.key.replace(/[^a-z0-9]/g, '');
     for (const win of windows) {
-      const d = bigramDice(entry.key, win.text);
-      // Prefer big text; tiny text is usually rules or "evolves from" lines.
-      const s = d * (0.55 + 0.45 * win.size);
+      let d = bigramDice(entry.key, win.text);
+      // Names often get glued to stylised logos ("LfCharizandZD" = Charizard + VSTAR logo):
+      // also compare against pieces of a long read the length of the name.
+      const flat = win.text.replace(/[^a-z0-9]/g, '');
+      if (keyLetters.length >= 5 && flat.length > keyLetters.length + 2) {
+        for (let len = keyLetters.length - 1; len <= keyLetters.length + 1; len++) {
+          for (let i = 0; i + len <= flat.length; i++) d = Math.max(d, bigramDice(keyLetters, flat.slice(i, i + len)) * 0.97);
+        }
+      }
+      // The name is the biggest text there; small text is "Evolves from …", "STAGE 1", etc.
+      const s = d * (0.3 + 0.7 * win.size);
       if (s > best) best = s;
     }
     // Short names ("Bill", "Mary", "Iono") match random OCR noise far too easily: unless the
