@@ -8,10 +8,18 @@
 <meta name="theme-color" content="#0b0d12" media="(prefers-color-scheme: dark)">
 <meta name="theme-color" content="#f6f7f9" media="(prefers-color-scheme: light)">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%23f2555a'/%3E%3Cstop offset='1' stop-color='%23c2185b'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='32' height='32' rx='8' fill='url(%23g)'/%3E%3Crect x='11' y='7' width='12' height='18' rx='2.5' fill='%23fff'/%3E%3Ccircle cx='17' cy='16' r='3.3' fill='none' stroke='%23e5484d' stroke-width='1.8'/%3E%3C/svg%3E">
+<!-- Installable app (home screen) -->
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Deck Forge">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="application-name" content="Deck Forge">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=20261126b">
+<link rel="stylesheet" href="style.css?v=20261126c">
 <script>
   // Apply the saved light/dark choice before the page paints
   try { const t = localStorage.getItem('df.theme'); if (t) document.documentElement.dataset.theme = t; } catch (e) { /* ignore */ }
@@ -56,6 +64,7 @@
       <button data-tab="saved"><svg class="i"><use href="#i-bookmark"/></svg><span class="l-long">Saved decks</span><span class="l-short">Saved</span></button>
       <button data-tab="meta"><svg class="i"><use href="#i-trophy"/></svg><span class="l-long">Tournament decks</span><span class="l-short">Meta</span></button>
     </nav>
+    <button id="installBtn" class="install-btn" hidden><svg class="i"><use href="#i-download"/></svg><span>Install</span></button>
     <button id="themeBtn" class="icon-btn" title="Switch light / dark" aria-label="Switch light or dark theme"><svg class="i"><use href="#i-moon"/></svg></button>
   </div>
 </header>
@@ -193,16 +202,28 @@
   </div>
 </dialog>
 
+<dialog id="installHelp" class="install-help">
+  <form method="dialog" class="modal-close"><button class="icon-btn" aria-label="Close"><svg class="i"><use href="#i-x"/></svg></button></form>
+  <img src="icons/icon-192.png" alt="" class="install-icon">
+  <h3>Add Deck Forge to your Home Screen</h3>
+  <ol>
+    <li>Tap the <b>Share</b> button <svg class="i" viewBox="0 0 24 24"><path d="M12 3v12M7 8l5-5 5 5M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7"/></svg> in Safari's toolbar.</li>
+    <li>Scroll down and tap <b>Add to Home Screen</b>.</li>
+    <li>Tap <b>Add</b>. Deck Forge opens full screen like any other app.</li>
+  </ol>
+  <p class="hint">On iPhone this only works in Safari. Your cards stay on your phone.</p>
+</dialog>
+
 <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
-<script src="cards.js?v=20261126b"></script>
-<script src="engine.js?v=20261126b"></script>
-<script src="sim.js?v=20261126b"></script>
-<script src="sample.js?v=20261126b"></script>
-<script src="scanner.js?v=20261126b"></script>
-<script src="meta.js?v=20261126b"></script>
-<script src="matchup.js?v=20261126b"></script>
-<script src="upgrade.js?v=20261126b"></script>
-<script src="app.js?v=20261126b"></script>
+<script src="cards.js?v=20261126c"></script>
+<script src="engine.js?v=20261126c"></script>
+<script src="sim.js?v=20261126c"></script>
+<script src="sample.js?v=20261126c"></script>
+<script src="scanner.js?v=20261126c"></script>
+<script src="meta.js?v=20261126c"></script>
+<script src="matchup.js?v=20261126c"></script>
+<script src="upgrade.js?v=20261126c"></script>
+<script src="app.js?v=20261126c"></script>
 </body>
 </html>

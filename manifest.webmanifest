@@ -1,0 +1,22 @@
+{
+  "name": "Deck Forge — Pokémon TCG deck builder",
+  "short_name": "Deck Forge",
+  "description": "Log and scan your Pokémon TCG cards, then build, play-test and tune decks from what you own.",
+  "id": "./",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0b0d12",
+  "theme_color": "#e5484d",
+  "categories": ["games", "utilities"],
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Scan cards", "short_name": "Scan", "url": "./?tab=add", "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }] },
+    { "name": "Build a deck", "short_name": "Build", "url": "./?tab=build", "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }] }
+  ]
+}

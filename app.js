@@ -809,6 +809,37 @@ $('#themeBtn').addEventListener('click', () => {
 });
 syncThemeIcon();
 
+// ---------- Install as an app ----------
+const isStandalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+const isIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+let installPrompt = null;
+// Android / desktop Chrome & Edge: the browser offers a real install prompt
+window.addEventListener('beforeinstallprompt', e => {
+  e.preventDefault();
+  installPrompt = e;
+  if (!isStandalone()) $('#installBtn').hidden = false;
+});
+window.addEventListener('appinstalled', () => { $('#installBtn').hidden = true; installPrompt = null; toast('Deck Forge installed — find it on your home screen'); });
+// iPhone / iPad Safari: no prompt exists, so show the steps instead
+if (isIOS() && !isStandalone()) $('#installBtn').hidden = false;
+$('#installBtn').addEventListener('click', async () => {
+  if (installPrompt) {
+    installPrompt.prompt();
+    const { outcome } = await installPrompt.userChoice;
+    if (outcome === 'accepted') $('#installBtn').hidden = true;
+    installPrompt = null;
+  } else {
+    $('#installHelp').showModal();
+  }
+});
+$('#installHelp').addEventListener('click', e => { if (e.target.id === 'installHelp') $('#installHelp').close(); });
+if (isStandalone()) document.documentElement.classList.add('standalone');
+
+// Offline support + instant start once installed
+if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
+  window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+}
+
 // Friendly starting point on the Add cards page (replaced by results once you search or scan)
 $('#results').innerHTML = `<div class="empty getting-started">
   <svg class="i big-i"><use href="#i-cards"/></svg>
@@ -820,4 +851,8 @@ $('#results').innerHTML = `<div class="empty getting-started">
 Collection.load();
 updateCount();
 CardDB.loadSets().catch(() => {});
-try { const t = localStorage.getItem('df.tab'); if (t && document.getElementById('tab-' + t)) showTab(t); } catch (e) { /* ignore */ }
+// Open on the tab named in the link (home-screen shortcuts use ?tab=add / ?tab=build), else the last one used
+try {
+  const want = new URLSearchParams(location.search).get('tab') || localStorage.getItem('df.tab');
+  if (want && document.getElementById('tab-' + want)) showTab(want);
+} catch (e) { /* ignore */ }
