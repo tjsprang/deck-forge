@@ -2,68 +2,112 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Deck Forge</title>
 <meta name="description" content="Log your Pokémon TCG cards and build the best deck from what you own.">
+<meta name="theme-color" content="#0b0d12" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f6f7f9" media="(prefers-color-scheme: light)">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%23f2555a'/%3E%3Cstop offset='1' stop-color='%23c2185b'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='32' height='32' rx='8' fill='url(%23g)'/%3E%3Crect x='11' y='7' width='12' height='18' rx='2.5' fill='%23fff'/%3E%3Ccircle cx='17' cy='16' r='3.3' fill='none' stroke='%23e5484d' stroke-width='1.8'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
+<script>
+  // Apply the saved light/dark choice before the page paints
+  try { const t = localStorage.getItem('df.theme'); if (t) document.documentElement.dataset.theme = t; } catch (e) { /* ignore */ }
+</script>
 </head>
 <body>
+<!-- Icon set -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <linearGradient id="brandGrad" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f2555a"/><stop offset="1" stop-color="#c2185b"/></linearGradient>
+  </defs>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-4.3-4.3"/></symbol>
+  <symbol id="i-hash" viewBox="0 0 24 24"><path d="M4 9h16M4 15h16M10 3 8 21M16 3l-2 18"/></symbol>
+  <symbol id="i-camera" viewBox="0 0 24 24"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3z"/><circle cx="12" cy="13" r="3.5"/></symbol>
+  <symbol id="i-scan" viewBox="0 0 24 24"><path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2M7 12h10"/></symbol>
+  <symbol id="i-image" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-5-5L5 21"/></symbol>
+  <symbol id="i-upload" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></symbol>
+  <symbol id="i-download" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></symbol>
+  <symbol id="i-add" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M12 8v8M8 12h8"/></symbol>
+  <symbol id="i-cards" viewBox="0 0 24 24"><rect x="3" y="6" width="13" height="16" rx="2"/><path d="M8 2h11a2 2 0 0 1 2 2v13"/></symbol>
+  <symbol id="i-spark" viewBox="0 0 24 24"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/><circle cx="12" cy="12" r="2.5"/></symbol>
+  <symbol id="i-bookmark" viewBox="0 0 24 24"><path d="m19 21-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></symbol>
+  <symbol id="i-trophy" viewBox="0 0 24 24"><path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0zM17 5h3v2a3 3 0 0 1-3 3M7 5H4v2a3 3 0 0 0 3 3"/></symbol>
+  <symbol id="i-chart" viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="m7 15 4-4 3 3 5-6"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.6-6.4L21 8"/><path d="M21 3v5h-5"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></symbol>
+  <symbol id="i-box" viewBox="0 0 24 24"><path d="m21 8-9-5-9 5 9 5zM3 8v8l9 5 9-5V8M12 13v8"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+</svg>
+
 <header class="top">
-  <div class="brand"><span class="logo">◓</span> Deck Forge <span class="sub">Pokémon TCG deck builder</span></div>
-  <nav class="tabs" id="tabs">
-    <button data-tab="add" class="active">Add cards</button>
-    <button data-tab="collection">Collection <span class="pill" id="collCount">0</span></button>
-    <button data-tab="build">Build deck</button>
-    <button data-tab="saved">Saved decks</button>
-    <button data-tab="meta">Tournament decks</button>
-  </nav>
+  <div class="top-inner">
+    <a class="brand" href="#" aria-label="Deck Forge home">
+      <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8" fill="url(#brandGrad)"/><rect x="8.5" y="7.5" width="12" height="18" rx="2.5" fill="#fff" opacity=".35" transform="rotate(-12 14.5 16.5)"/><rect x="11" y="7" width="12" height="18" rx="2.5" fill="#fff"/><circle cx="17" cy="16" r="3.3" fill="none" stroke="#e5484d" stroke-width="1.8"/><path d="M13.7 16h6.6" stroke="#e5484d" stroke-width="1.8"/></svg>
+      <span class="brand-text"><b>Deck Forge</b><small>Pokémon TCG deck builder</small></span>
+    </a>
+    <nav class="tabs" id="tabs" aria-label="Sections">
+      <button data-tab="add" class="active"><svg class="i"><use href="#i-add"/></svg><span class="l-long">Add cards</span><span class="l-short">Add</span></button>
+      <button data-tab="collection"><svg class="i"><use href="#i-cards"/></svg><span class="l-long">Collection</span><span class="l-short">Cards</span><span class="pill" id="collCount">0</span></button>
+      <button data-tab="build"><svg class="i"><use href="#i-spark"/></svg><span class="l-long">Build deck</span><span class="l-short">Build</span></button>
+      <button data-tab="saved"><svg class="i"><use href="#i-bookmark"/></svg><span class="l-long">Saved decks</span><span class="l-short">Saved</span></button>
+      <button data-tab="meta"><svg class="i"><use href="#i-trophy"/></svg><span class="l-long">Tournament decks</span><span class="l-short">Meta</span></button>
+    </nav>
+    <button id="themeBtn" class="icon-btn" title="Switch light / dark" aria-label="Switch light or dark theme"><svg class="i"><use href="#i-moon"/></svg></button>
+  </div>
 </header>
 
 <main>
   <!-- ADD CARDS -->
   <section id="tab-add" class="tab active">
+    <div class="page-head">
+      <h1>Add cards</h1>
+      <p>Search every Pokémon card ever printed, type the number from the card, or scan it with your camera.</p>
+    </div>
     <div class="add-grid">
-      <div class="panel">
-        <h2>Search by name</h2>
+      <div class="panel method">
+        <div class="method-head"><span class="method-icon"><svg class="i"><use href="#i-search"/></svg></span><div><h2>Search by name</h2><p class="hint">All printings, newest first</p></div></div>
         <form id="searchForm" class="row">
-          <input id="searchInput" type="search" placeholder="e.g. Charizard ex, Ultra Ball, Iono" autocomplete="off" required>
+          <input id="searchInput" type="search" placeholder="Charizard ex, Ultra Ball, Iono…" autocomplete="off" required>
           <button class="primary">Search</button>
         </form>
         <label class="check"><input type="checkbox" id="standardOnly"> Standard-legal printings only</label>
       </div>
-      <div class="panel">
-        <h2>Set + number</h2>
+      <div class="panel method">
+        <div class="method-head"><span class="method-icon"><svg class="i"><use href="#i-hash"/></svg></span><div><h2>Set + number</h2><p class="hint">Printed in the bottom corner of every card</p></div></div>
         <form id="numberForm" class="row">
-          <input id="numberInput" placeholder="e.g. OBF 125, sv03 125, or 125/197" autocomplete="off" required>
+          <input id="numberInput" placeholder="OBF 125, sv03 125 or 125/197" autocomplete="off" required>
           <button class="primary">Find</button>
         </form>
-        <p class="hint">The number is printed in the bottom corner of every card.</p>
       </div>
-      <div class="panel">
-        <h2>Scan a card</h2>
+      <div class="panel method">
+        <div class="method-head"><span class="method-icon"><svg class="i"><use href="#i-camera"/></svg></span><div><h2>Scan a card</h2><p class="hint">Reads the name and number, then matches the artwork</p></div></div>
         <div class="row">
-          <button id="cameraBtn" class="primary">Use camera</button>
-          <button id="bulkBtn" title="Keep the camera running and flip through a stack of cards">Bulk scan</button>
-          <label class="btn">Upload photo<input id="photoInput" type="file" accept="image/*" capture="environment" hidden></label>
+          <button id="cameraBtn" class="primary"><svg class="i"><use href="#i-camera"/></svg>Camera</button>
+          <button id="bulkBtn" title="Keep the camera running and flip through a stack of cards"><svg class="i"><use href="#i-scan"/></svg>Bulk scan</button>
+          <label class="btn"><svg class="i"><use href="#i-image"/></svg>Photo<input id="photoInput" type="file" accept="image/*" capture="environment" hidden></label>
         </div>
-        <p class="hint">Works for any era. Fill the frame with the card and avoid glare; it reads the name and number, then compares the artwork to find the exact printing. <b>Bulk scan</b>: hold cards up one at a time — sure matches are added automatically, unsure ones go to a review pile.</p>
+        <p class="hint tight">Fill the frame and avoid glare. <b>Bulk scan</b> adds sure matches automatically and keeps a review pile for the rest.</p>
       </div>
     </div>
 
-    <div id="scanner" class="scanner" hidden>
+    <div id="scanner" class="scanner panel" hidden>
       <div class="video-wrap">
         <video id="video" playsinline muted></video>
         <div class="card-guide"></div>
       </div>
       <div id="bulkStatus" class="bulk-status" hidden></div>
       <div class="row center">
-        <button id="captureBtn" class="primary">Capture</button>
-        <button id="stopCamBtn">Close camera</button>
+        <button id="captureBtn" class="primary big"><svg class="i"><use href="#i-camera"/></svg>Capture</button>
+        <button id="stopCamBtn" class="big"><svg class="i"><use href="#i-x"/></svg>Close camera</button>
       </div>
     </div>
 
     <div id="bulkPanel" class="panel bulk-panel" hidden>
-      <div class="row" style="align-items:center"><h2 style="margin:0">Bulk scan</h2><span class="spacer"></span><span id="bulkCounts" class="hint" style="margin:0"></span></div>
+      <div class="panel-title"><h2>Bulk scan</h2><span id="bulkCounts" class="hint"></span></div>
       <h3 class="sub">Added</h3><div id="bulkAdded" class="bulk-list"></div>
       <h3 class="sub">Needs review</h3><div id="bulkReview" class="bulk-review"></div>
     </div>
@@ -74,41 +118,47 @@
 
   <!-- COLLECTION -->
   <section id="tab-collection" class="tab">
-    <div class="toolbar">
-      <input id="collFilter" type="search" placeholder="Filter your collection…">
-      <select id="collCategory">
+    <div class="page-head with-actions">
+      <div><h1>Your collection</h1><p id="collSummary" class="status"></p></div>
+      <div class="actions-row">
+        <button id="statsBtn" class="primary"><svg class="i"><use href="#i-chart"/></svg>Value &amp; stats</button>
+        <button id="exportBtn" title="Download a backup of your collection"><svg class="i"><use href="#i-download"/></svg>Export</button>
+        <label class="btn" title="Load a collection backup"><svg class="i"><use href="#i-upload"/></svg>Import<input id="importInput" type="file" accept=".json,application/json" hidden></label>
+        <button id="sampleBtn" class="ghost" title="Load a sample collection so you can try the deck builder"><svg class="i"><use href="#i-box"/></svg>Sample</button>
+      </div>
+    </div>
+    <div class="toolbar filters">
+      <div class="search-field"><svg class="i"><use href="#i-search"/></svg><input id="collFilter" type="search" placeholder="Filter by name or set…"></div>
+      <select id="collCategory" aria-label="Card type">
         <option value="">All cards</option><option value="Pokemon">Pokémon</option><option value="Trainer">Trainers</option><option value="Energy">Energy</option>
       </select>
-      <select id="collLegal">
+      <select id="collLegal" aria-label="Format">
         <option value="">Any format</option><option value="standard">Standard legal</option><option value="expanded">Expanded legal</option>
       </select>
-      <select id="collSort">
+      <select id="collSort" aria-label="Sort">
         <option value="name">Sort: name</option><option value="qty">Sort: quantity</option><option value="set">Sort: set</option><option value="type">Sort: type</option>
       </select>
-      <span class="spacer"></span>
-      <button id="exportBtn">Export</button>
-      <label class="btn">Import<input id="importInput" type="file" accept=".json,application/json" hidden></label>
-      <button id="sampleBtn" title="Load a sample collection so you can try the deck builder">Load sample</button>
-      <button id="statsBtn" class="primary">Value &amp; stats</button>
     </div>
-    <div id="collSummary" class="status"></div>
     <div id="statsPanel" hidden></div>
     <div id="collGrid" class="card-grid"></div>
   </section>
 
   <!-- BUILD -->
   <section id="tab-build" class="tab">
+    <div class="page-head">
+      <h1>Deck builder</h1>
+      <p>Builds legal 60-card decks from your cards, play-tests thousands of opening hands and tunes the counts. Decks share your collection, so the same cards can go in every deck.</p>
+    </div>
     <div class="panel build-opts">
       <div class="field"><label for="fmt">Format</label>
         <select id="fmt"><option value="standard">Standard</option><option value="expanded">Expanded</option><option value="unlimited">Unlimited (casual)</option></select></div>
-      <div class="field"><label for="focus">Build around (optional)</label>
+      <div class="field grow"><label for="focus">Build around</label>
         <input id="focus" list="focusList" placeholder="Any Pokémon"><datalist id="focusList"></datalist></div>
-      <div class="field"><label for="etype">Energy type (optional)</label>
+      <div class="field"><label for="etype">Energy type</label>
         <select id="etype"><option value="">Any</option><option>Grass</option><option>Fire</option><option>Water</option><option>Lightning</option><option>Psychic</option><option>Fighting</option><option>Darkness</option><option>Metal</option><option>Dragon</option><option>Colorless</option></select></div>
       <label class="check"><input type="checkbox" id="assumeEnergy" checked> Assume I have basic Energy</label>
-      <button id="generateBtn" class="primary big">Build my best decks</button>
+      <button id="generateBtn" class="primary big"><svg class="i"><use href="#i-spark"/></svg>Build my best decks</button>
     </div>
-    <p class="hint">Every deck is built from your whole collection — decks don't use up cards, so your 3 Ultra Balls can go in every deck you build or save.</p>
     <div id="buildStatus" class="status"></div>
     <div id="deckTabs" class="deck-tabs"></div>
     <div id="deckView"></div>
@@ -116,15 +166,19 @@
 
   <!-- SAVED -->
   <section id="tab-saved" class="tab">
+    <div class="page-head">
+      <h1>Saved decks</h1>
+      <p>Decks you've saved from the builder. Edits re-run the play-test automatically.</p>
+    </div>
     <div id="savedList"></div>
     <div id="savedView"></div>
   </section>
 
   <!-- TOURNAMENT DECKS -->
   <section id="tab-meta" class="tab">
-    <div class="toolbar">
-      <div id="metaInfo" class="hint" style="margin:0;flex:1"></div>
-      <button id="metaRefresh">Refresh</button>
+    <div class="page-head with-actions">
+      <div><h1>Tournament decks</h1><p id="metaInfo"></p></div>
+      <div class="actions-row"><button id="metaRefresh"><svg class="i"><use href="#i-refresh"/></svg>Refresh</button></div>
     </div>
     <div id="metaStatus" class="status"></div>
     <div id="metaList"></div>
@@ -132,14 +186,14 @@
 </main>
 
 <dialog id="cardModal">
+  <form method="dialog" class="modal-close"><button class="icon-btn" aria-label="Close"><svg class="i"><use href="#i-x"/></svg></button></form>
   <div class="modal-body">
     <img id="modalImg" alt="">
     <div id="modalInfo"></div>
   </div>
-  <form method="dialog"><button class="close">Close</button></form>
 </dialog>
 
-<div id="toast" class="toast"></div>
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
 
 <script src="cards.js"></script>
 <script src="engine.js"></script>

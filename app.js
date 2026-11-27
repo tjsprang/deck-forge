@@ -794,6 +794,28 @@ async function renderStats() {
   </div>`;
 }
 
+// ---------- Light / dark switch ----------
+function currentTheme() {
+  return document.documentElement.dataset.theme || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+}
+function syncThemeIcon() {
+  $('#themeBtn use').setAttribute('href', currentTheme() === 'dark' ? '#i-sun' : '#i-moon');
+}
+$('#themeBtn').addEventListener('click', () => {
+  const next = currentTheme() === 'dark' ? 'light' : 'dark';
+  document.documentElement.dataset.theme = next;
+  try { localStorage.setItem('df.theme', next); } catch (e) { /* ignore */ }
+  syncThemeIcon();
+});
+syncThemeIcon();
+
+// Friendly starting point on the Add cards page (replaced by results once you search or scan)
+$('#results').innerHTML = `<div class="empty getting-started">
+  <svg class="i big-i"><use href="#i-cards"/></svg>
+  <h3>Start building your collection</h3>
+  <p>Search for a card, type the set and number printed on it, or scan it with your camera. Every card you add can be used in every deck you build.</p>
+</div>`;
+
 // ---------- Init ----------
 Collection.load();
 updateCount();
