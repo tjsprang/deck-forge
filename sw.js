@@ -4,7 +4,7 @@
 //  - Card pictures: cached as you view them, so your collection still shows offline.
 //  - Card database / tournament / price lookups always go to the network (they're live data;
 //    the app keeps its own copies of what it needs in browser storage).
-const VERSION = 'v5'; // bump with the ?v= value in index.html on each release
+const VERSION = 'v6'; // bump with the ?v= value in index.html on each release
 const APP_CACHE = `deck-forge-app-${VERSION}`;
 const IMG_CACHE = 'deck-forge-images';
 const APP_FILES = [

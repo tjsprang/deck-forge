@@ -87,12 +87,15 @@ const Scanner = {
     // Name strip (top-left), a looser version, and the full top strip — some layouts (V, VSTAR,
     // VMAX) put a stage tab and portrait left of the name, which can blur together in a tight crop.
     // Still only the top ~15% of the card: never the attack text.
-    const region = [[0, 0.015, 0.72, 0.125], [0, 0, 0.78, 0.16], [0, 0, 1, 0.15]];
+    // Trainer cards (and older layouts) put a big "TRAINER" banner on top and the name on the
+    // line below it — on the left (2010s) or the right (2000s, "Root Fossil HP 40") — so there's
+    // also a full-width read of that line.
+    const region = [[0, 0.015, 0.72, 0.125], [0, 0, 0.78, 0.16], [0, 0, 1, 0.15], [0, 0.05, 1, 0.11]];
     const passes = [
       // [region, target text height px, image variant, page mode]
-      [0, 46, 'plain', '6'], [2, 70, 'plain', '3'], [0, 46, 'invert', '6'], [2, 70, 'invert', '3'],
-      [0, 34, 'plain', '6'], [2, 90, 'plain', '3'], [0, 62, 'plain', '6'], [1, 46, 'plain', '11'],
-      [0, 46, 'bw', '6'], [2, 70, 'bw', '3'], [0, 28, 'plain', '7'],
+      [0, 46, 'plain', '6'], [2, 70, 'plain', '3'], [3, 46, 'plain', '6'], [0, 46, 'invert', '6'],
+      [2, 70, 'invert', '3'], [3, 36, 'plain', '11'], [0, 34, 'plain', '6'], [2, 90, 'plain', '3'],
+      [0, 62, 'plain', '6'], [1, 46, 'plain', '11'], [0, 46, 'bw', '6'], [2, 70, 'bw', '3'], [0, 28, 'plain', '7'],
     ];
     for (const [ri, target, variant, psm] of passes) {
       const [x, y, w, h] = region[ri];
@@ -435,16 +438,21 @@ function matchNames(words, idx) {
     if (/^put$/.test(w)) { i += 2; continue; }
     cleaned.push(words[i]);
   }
-  const maxH = Math.max(...cleaned.map(w => w.h), 1);
+  // Banner/label words ("TRAINER", "ITEM", "STAGE 1", "HP") are often the biggest text at the
+  // top but are never the name — they mustn't make the real name look small by comparison.
+  const label = w => /^(trainer|supporter|item|stadium|tool|pok[eé]mon|energy|basic|stage\d?|special|hp\d*|ability|pok[eé]-?(body|power)|ace|spec|technical|machine|rule|goldenrod|[0-9]+)$/i.test(w.t.replace(/[^\wÀ-ÿ-]/g, ''));
+  const nameish = cleaned.filter(w => !label(w));
+  const maxH = Math.max(...(nameish.length ? nameish : cleaned).map(w => w.h), 1);
   // Candidate windows of 1-4 consecutive words
   const windows = [];
   for (let i = 0; i < cleaned.length; i++) {
     for (let n = 1; n <= 4 && i + n <= cleaned.length; n++) {
       const ws = cleaned.slice(i, i + n);
+      if (ws.every(label)) continue; // "TRAINER" alone is not a card name
       const text = normName(ws.map(w => w.t).join(' '));
       if (text.replace(/[^a-z]/g, '').length < 3) continue;
       const h = ws.reduce((a, w) => a + w.h, 0) / n;
-      windows.push({ text, size: h / maxH });
+      windows.push({ text, size: Math.min(1, h / maxH) });
     }
   }
   // Shortlist names sharing trigrams with any window

@@ -319,6 +319,23 @@ function renderScanResult(res, fromCamera) {
   const img = cardImage(c);
   const others = res.results.length - 1;
   box.dataset.id = c.id;
+  // Not sure (often a reprint with the same artwork and an unreadable number): show the top
+  // few side by side so the right one is one tap away — compare the set symbol and number.
+  if (!res.confident && res.results.length > 1) {
+    const opts = res.results.slice(0, 3);
+    box.innerHTML = `
+      <span class="sr-label check">Which one is it? Compare the set symbol and number</span>
+      <div class="sr-choices">${opts.map(o => `
+        <div class="sr-choice" data-id="${esc(o.id)}">
+          ${cardImage(o) ? `<img src="${esc(cardImage(o))}" alt="" data-sr="zoom">` : ''}
+          <b>${esc(o.name)}</b>
+          <small>${esc(o.setName)}<br>${esc(o.localId)}${o.setTotal ? '/' + o.setTotal : ''}</small>
+          <button class="primary" data-sr="add"><span>Add</span></button>
+        </div>`).join('')}</div>
+      ${others > 2 ? `<button class="sr-others" data-sr="others">See all ${res.results.length} possible matches ↓</button>` : ''}`;
+    box.hidden = false;
+    return;
+  }
   box.innerHTML = `
     <div class="sr-card">
       ${img ? `<img src="${esc(img)}" alt="" data-sr="zoom">` : ''}
@@ -339,7 +356,10 @@ function renderScanResult(res, fromCamera) {
 $('#scanResult').addEventListener('click', e => {
   const b = e.target.closest('[data-sr]');
   if (!b) return;
-  const card = lastResults.find(c => c.id === $('#scanResult').dataset.id);
+  // Which card: a choice tile (when picking between printings) or the single match
+  const choice = b.closest('.sr-choice');
+  const id = choice ? choice.dataset.id : $('#scanResult').dataset.id;
+  const card = lastResults.find(c => c.id === id);
   if (!card) return;
   const act = b.dataset.sr;
   if (act === 'zoom') return openCard(card);
@@ -348,10 +368,10 @@ $('#scanResult').addEventListener('click', e => {
     Collection.add(card, 1);
     updateCount();
     const own = Collection.data.qty[card.id];
-    toast(`Added ${card.name} — you own ${own}`);
-    $('#srOwn').textContent = `You own ${own}`;
-    const addBtn = $('#scanResult [data-sr="add"] span');
-    if (addBtn) addBtn.textContent = 'Add another copy';
+    toast(`Added ${card.name} (${card.setName}) — you own ${own}`);
+    if ($('#srOwn')) $('#srOwn').textContent = `You own ${own}`;
+    const addBtn = (choice || $('#scanResult')).querySelector('[data-sr="add"] span');
+    if (addBtn) addBtn.textContent = choice ? `Added (${own})` : 'Add another copy';
     // keep the tile in the list below in sync
     const tile = document.querySelector(`#results .card[data-id="${CSS.escape(card.id)}"]`);
     if (tile) { const best = tile.classList.contains('best'); tile.outerHTML = cardTile(card, 'results'); if (best) document.querySelector(`#results .card[data-id="${CSS.escape(card.id)}"]`)?.classList.add('best'); }
