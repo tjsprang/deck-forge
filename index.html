@@ -19,7 +19,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=20261127g">
+<link rel="stylesheet" href="style.css?v=20261128a">
 <script>
   // Apply the saved light/dark choice before the page paints
   try { const t = localStorage.getItem('df.theme'); if (t) document.documentElement.dataset.theme = t; } catch (e) { /* ignore */ }
@@ -209,6 +209,12 @@
   </div>
 </dialog>
 
+<dialog id="versionPicker" class="version-picker">
+  <form method="dialog" class="modal-close"><button class="icon-btn" aria-label="Close"><svg class="i"><use href="#i-x"/></svg></button></form>
+  <div id="vpBody"></div>
+  <form method="dialog" class="vp-done"><button class="primary big">Done</button></form>
+</dialog>
+
 <dialog id="installHelp" class="install-help">
   <form method="dialog" class="modal-close"><button class="icon-btn" aria-label="Close"><svg class="i"><use href="#i-x"/></svg></button></form>
   <img src="icons/icon-192.png" alt="" class="install-icon">
@@ -223,14 +229,14 @@
 
 <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
-<script src="cards.js?v=20261127g"></script>
-<script src="engine.js?v=20261127g"></script>
-<script src="sim.js?v=20261127g"></script>
-<script src="sample.js?v=20261127g"></script>
-<script src="scanner.js?v=20261127g"></script>
-<script src="meta.js?v=20261127g"></script>
-<script src="matchup.js?v=20261127g"></script>
-<script src="upgrade.js?v=20261127g"></script>
-<script src="app.js?v=20261127g"></script>
+<script src="cards.js?v=20261128a"></script>
+<script src="engine.js?v=20261128a"></script>
+<script src="sim.js?v=20261128a"></script>
+<script src="sample.js?v=20261128a"></script>
+<script src="scanner.js?v=20261128a"></script>
+<script src="meta.js?v=20261128a"></script>
+<script src="matchup.js?v=20261128a"></script>
+<script src="upgrade.js?v=20261128a"></script>
+<script src="app.js?v=20261128a"></script>
 </body>
 </html>

@@ -46,24 +46,41 @@ function badges(card) {
   return `<div class="badges">${b.join('')}</div>`;
 }
 
-// Market price on a tile, once it's been loaded (Collection tab: also the value of all copies)
-function priceTag(card, mode) {
-  const p = Prices.get(card.id);
+// Market price on a tile, once it's been loaded. In the Cards tab it's the price of that exact
+// version (a 1st Edition holo is worth far more than an unlimited one), plus the value of all copies.
+function priceTag(card, mode, version = '', qty = 0) {
+  const p = mode === 'collection' ? Prices.forVersion(card.id, version) : Prices.get(card.id);
   if (Prices.value(p) == null) return '';
-  const qty = Collection.data.qty[card.id] || 0;
   return `<div class="price-tag">${Prices.fmt(p)}${mode === 'collection' && qty > 1 ? ` <small>× ${qty} = ${Prices.fmt(p, qty)}</small>` : ''}</div>`;
 }
-function cardTile(card, mode) {
-  const owned = Collection.data.qty[card.id] || 0;
+const hasChoice = card => (card.versions || []).length > 1;
+const versionName = (card, key) => key ? (versionOf(card, key)?.label || key.split('|').filter(Boolean).map(titleCase).join(' · ')) : '';
+
+// entry (Cards tab only): one version of the card — { key, version, qty }
+function cardTile(card, mode, entry = null) {
+  const owned = Collection.count(card.id);
   const img = cardImage(card);
   const imgHtml = img ? `<img loading="lazy" src="${esc(img)}" alt="${esc(card.name)}">` : `<div class="noimg">${esc(card.name)}<br>(no image)</div>`;
-  const actions = mode === 'collection'
-    ? `<button data-act="dec" aria-label="Remove one">−</button><span class="qty">${owned}</span><button data-act="inc" aria-label="Add one">+</button>`
-    : `<button data-act="add1">+1</button><button data-act="add4">+4</button>${owned ? `<button data-act="dec" title="Remove one">−</button>` : ''}`;
-  return `<div class="card" data-id="${esc(card.id)}">
+  let actions, versionLine = '';
+  if (mode === 'collection') {
+    const q = entry ? entry.qty : owned;
+    actions = `<button data-act="dec" aria-label="Remove one">−</button><span class="qty">${q}</span><button data-act="inc" aria-label="Add one">+</button>`;
+    // Which version these copies are (or a prompt to set it)
+    versionLine = entry && entry.version
+      ? `<button class="version-chip" data-act="versions" title="Change version">${esc(versionName(card, entry.version))}</button>`
+      : hasChoice(card) || (card.versions || []).length === 0
+        ? `<button class="version-chip unset" data-act="versions">Version not set — choose</button>`
+        : '';
+  } else {
+    actions = hasChoice(card)
+      ? `<button data-act="pick" class="add-btn">+ Add <small>${card.versions.length} versions</small></button>${owned ? `<button data-act="pick" title="Owned versions">×${owned}</button>` : ''}`
+      : `<button data-act="add1">+1</button><button data-act="add4">+4</button>${owned ? `<button data-act="dec" title="Remove one">−</button>` : ''}`;
+  }
+  const qtyForPrice = entry ? entry.qty : owned;
+  return `<div class="card" data-id="${esc(card.id)}"${entry ? ` data-key="${esc(entry.key)}"` : ''}>
     <div class="img" data-act="zoom">${imgHtml}${owned && mode !== 'collection' ? `<span class="owned">×${owned}</span>` : ''}</div>
     <div class="meta"><div class="name">${esc(card.name)}</div>
-      <div class="set">${esc(card.setName)} · ${esc(card.localId)}${card.setTotal ? '/' + card.setTotal : ''}</div>${badges(card)}${priceTag(card, mode)}</div>
+      <div class="set">${esc(card.setName)} · ${esc(card.localId)}${card.setTotal ? '/' + card.setTotal : ''}</div>${versionLine}${badges(card)}${priceTag(card, mode, entry?.version || '', qtyForPrice)}</div>
     <div class="actions">${actions}</div></div>`;
 }
 
@@ -77,14 +94,74 @@ function onGridClick(e, mode) {
   if (!card) return;
   const act = btn.dataset.act;
   if (act === 'zoom') return openCard(card);
-  if (act === 'add1' || act === 'inc') Collection.add(card, 1);
-  if (act === 'add4') Collection.add(card, 4);
-  if (act === 'dec') Collection.add(card, -1);
-  if (act !== 'zoom') {
-    updateCount();
-    if (mode === 'collection') renderCollection();
-    else { tile.outerHTML = cardTile(card, 'results'); if (act.startsWith('add')) toast(`Added ${act === 'add4' ? 4 : 1}× ${card.name}`); }
+  const refresh = () => { updateCount(); if (mode === 'collection') renderCollection(); else tile.outerHTML = cardTile(card, 'results'); };
+  if (act === 'pick' || act === 'versions') return openVersionPicker(card).then(refresh);
+  if (mode === 'collection') {
+    const [, version] = Collection.parseKey(tile.dataset.key || card.id);
+    Collection.add(card, act === 'inc' ? 1 : -1, version);
+    return refresh();
   }
+  // Single-version card in search results: add that version directly
+  const only = card.versions?.[0]?.key || '';
+  if (act === 'add1') Collection.add(card, 1, only);
+  if (act === 'add4') Collection.add(card, 4, only);
+  if (act === 'dec') {
+    const owned = Collection.versionsOf(card.id).sort((a, b) => b.qty - a.qty)[0];
+    if (owned) Collection.add(card, -1, owned.version);
+  }
+  refresh();
+  if (act.startsWith('add')) toast(`Added ${act === 'add4' ? 4 : 1}× ${card.name}`);
+}
+
+// ---------- Version picker: how many copies of each version you own ----------
+async function openVersionPicker(card) {
+  const dlg = $('#versionPicker');
+  const render = () => {
+    const owned = new Map(Collection.versionsOf(card.id).map(v => [v.version, v.qty]));
+    const unset = owned.get('') || 0;
+    const versions = card.versions?.length ? card.versions : [{ key: 'normal||||', label: 'Normal' }];
+    const loaded = !!Prices.get(card.id);
+    $('#vpBody').innerHTML = `
+      <div class="vp-head">
+        ${cardImage(card) ? `<img src="${esc(cardImage(card))}" alt="">` : ''}
+        <div><h3>${esc(card.name)}</h3><small>${esc(card.setName)} · ${esc(card.localId)}${card.setTotal ? '/' + card.setTotal : ''}</small>
+        <p class="hint">Which version do you have? It changes what the card is worth.${loaded ? '' : ' <span class="spinner"></span>Loading prices…'}</p></div>
+      </div>
+      ${unset ? `<div class="vp-unset">You have <b>${unset}</b> ${unset === 1 ? 'copy' : 'copies'} with no version set — tap <b>Move here</b> on the right one.</div>` : ''}
+      <div class="vp-list">${versions.map(v => {
+        const n = owned.get(v.key) || 0;
+        const p = Prices.forVersion(card.id, v.key);
+        const exact = !!Prices.get(card.id)?.versions?.[v.key];
+        return `<div class="vp-row${n ? ' owned' : ''}" data-v="${esc(v.key)}">
+          <div class="vp-name"><b>${esc(v.label)}</b><small class="${exact ? '' : 'none'}">${loaded ? (exact ? Prices.fmt(p) + (p.usd == null && p.eur != null ? ` <span class="eur">(${Prices.fmtEur(p)} on Cardmarket)</span>` : '') : 'no price listed') : ''}</small></div>
+          ${unset ? `<button class="vp-move" data-vp="move">Move here</button>` : ''}
+          <div class="vp-qty"><button data-vp="dec" aria-label="One fewer"${n ? '' : ' disabled'}>−</button><span>${n}</span><button data-vp="inc" aria-label="One more">+</button></div>
+        </div>`;
+      }).join('')}</div>`;
+  };
+  render();
+  dlg.showModal();
+  // Prices (and the full version list, for cards saved before versions existed)
+  if (!Prices.get(card.id) || !card.versions?.length) {
+    fetchCardFull(card.id).then(r => {
+      if (r?.card?.versions?.length && !card.versions?.length) card.versions = r.card.versions;
+      Prices.save();
+      if (dlg.open) render();
+    });
+  }
+  dlg.onclick = e => {
+    if (e.target === dlg) return dlg.close();
+    const b = e.target.closest('[data-vp]');
+    const row = e.target.closest('.vp-row');
+    if (!b || !row) return;
+    const v = row.dataset.v;
+    if (b.dataset.vp === 'inc') Collection.add(card, 1, v);
+    if (b.dataset.vp === 'dec') Collection.add(card, -1, v);
+    if (b.dataset.vp === 'move') Collection.moveVersion(card, '', v, 1);
+    updateCount();
+    render();
+  };
+  return new Promise(res => dlg.addEventListener('close', res, { once: true }));
 }
 $('#results').addEventListener('click', e => onGridClick(e, 'results'));
 $('#collGrid').addEventListener('click', e => onGridClick(e, 'collection'));
@@ -110,7 +187,7 @@ function openCard(card) {
     ${card.hp ? `<p>HP ${card.hp} · ${esc((card.types || []).join('/'))} · Retreat ${card.retreat}${prizes > 1 ? ` · gives up <b>${prizes} Prizes</b>` : ''}</p>` : ''}
     ${card.evolveFrom ? `<p>Evolves from <b>${esc(card.evolveFrom)}</b></p>` : ''}
     ${abil}${atk}${card.effect ? `<p>${esc(card.effect)}</p>` : ''}
-    <p><b>You own: ${Collection.data.qty[card.id] || 0}</b></p>`;
+    <p><b>You own: ${Collection.count(card.id)}</b>${Collection.versionsOf(card.id).filter(v => v.version).map(v => ` · ${v.qty}× ${esc(versionName(card, v.version))}`).join("")}</p>`;
   $('#cardModal').showModal();
 }
 $('#cardModal').addEventListener('click', e => { if (e.target.id === 'cardModal') $('#cardModal').close(); });
@@ -322,10 +399,18 @@ function renderScanResult(res, fromCamera) {
   const box = $('#scanResult');
   const c = res?.results?.[0];
   if (!c) { box.hidden = true; return; }
-  const own = Collection.data.qty[c.id] || 0;
+  const own = Collection.count(c.id);
   const img = cardImage(c);
   const others = res.results.length - 1;
   box.dataset.id = c.id;
+  // Version choice (normal / holo / reverse / 1st Edition…): the first listed is pre-selected
+  const versions = c.versions || [];
+  box.dataset.version = versions[0]?.key || '';
+  const versionChips = versions.length > 1 ? `
+    <div class="sr-versions" role="radiogroup" aria-label="Version">
+      <span class="sr-vlabel">Which version?</span>
+      ${versions.map((v, i) => `<button class="vchip${i === 0 ? ' on' : ''}" data-sr="version" data-v="${esc(v.key)}" role="radio" aria-checked="${i === 0}">${esc(v.label)}<small class="vprice" data-vp="${esc(v.key)}"></small></button>`).join('')}
+    </div>` : '';
   // Not sure (often a reprint with the same artwork and an unreadable number): show the top
   // few side by side so the right one is one tap away — compare the set symbol and number.
   if (!res.confident && res.results.length > 1) {
@@ -353,12 +438,21 @@ function renderScanResult(res, fromCamera) {
         <span class="sr-own" id="srOwn">${own ? `You own ${own}` : 'Not in your collection yet'}</span>
       </div>
     </div>
+    ${versionChips}
     <div class="sr-actions">
       <button class="primary big" data-sr="add"><svg class="i"><use href="#i-add"/></svg><span>Add to collection</span></button>
       ${fromCamera ? `<button class="big" data-sr="addnext"><svg class="i"><use href="#i-camera"/></svg>Add &amp; scan next</button>` : ''}
     </div>
     ${others ? `<button class="sr-others" data-sr="others">Not this card? See ${others} other possible match${others === 1 ? '' : 'es'} ↓</button>` : ''}`;
   box.hidden = false;
+  // Fill in each version's price once loaded
+  if (versions.length > 1) {
+    const fill = () => box.querySelectorAll('.vprice').forEach(el => {
+      const vp = Prices.get(c.id)?.versions?.[el.dataset.vp];
+      el.textContent = vp ? ' ' + Prices.fmt(vp) : '';
+    });
+    if (Prices.get(c.id)) fill(); else fetchCardFull(c.id).then(() => { Prices.save(); fill(); });
+  }
 }
 $('#scanResult').addEventListener('click', e => {
   const b = e.target.closest('[data-sr]');
@@ -371,11 +465,26 @@ $('#scanResult').addEventListener('click', e => {
   const act = b.dataset.sr;
   if (act === 'zoom') return openCard(card);
   if (act === 'others') return $('#resultsStatus').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  if (act === 'version') {
+    $('#scanResult').dataset.version = b.dataset.v;
+    $('#scanResult').querySelectorAll('.vchip').forEach(x => { x.classList.toggle('on', x === b); x.setAttribute('aria-checked', x === b); });
+    return;
+  }
+  // Picking between printings, and this one has several versions: ask which
+  if (choice && act === 'add' && hasChoice(card)) {
+    return openVersionPicker(card).then(() => {
+      updateCount();
+      const n = Collection.count(card.id);
+      const span = choice.querySelector('[data-sr="add"] span');
+      if (span && n) span.textContent = `Added (${n})`;
+    });
+  }
   if (act === 'add' || act === 'addnext') {
-    Collection.add(card, 1);
+    const version = choice ? (card.versions?.[0]?.key || '') : ($('#scanResult').dataset.version || '');
+    Collection.add(card, 1, version);
     updateCount();
-    const own = Collection.data.qty[card.id];
-    toast(`Added ${card.name} (${card.setName}) — you own ${own}`);
+    const own = Collection.count(card.id);
+    toast(`Added ${card.name} (${card.setName})${version && hasChoice(card) ? ' · ' + versionName(card, version) : ''} — you own ${own}`);
     if ($('#srOwn')) $('#srOwn').textContent = `You own ${own}`;
     const addBtn = (choice || $('#scanResult')).querySelector('[data-sr="add"] span');
     if (addBtn) addBtn.textContent = choice ? `Added (${own})` : 'Add another copy';
@@ -492,14 +601,15 @@ async function recognizeCard(canvas, { steps = false, fromCamera = false } = {})
 function renderCollection() {
   const q = $('#collFilter').value.trim().toLowerCase();
   const cat = $('#collCategory').value, leg = $('#collLegal').value, sort = $('#collSort').value;
-  let list = Collection.entries();
+  // One tile per card AND version (a holo and a reverse holo of the same card are separate)
+  let list = Collection.versionEntries();
   const total = list.reduce((a, e) => a + e.qty, 0);
   if (q) list = list.filter(e => e.card.name.toLowerCase().includes(q) || e.card.setName.toLowerCase().includes(q));
   if (cat) list = list.filter(e => e.card.category === cat);
   if (leg) list = list.filter(e => e.card.legal[leg]);
   const typeKey = e => (e.card.category === 'Pokemon' ? '0' + (e.card.types[0] || '') : e.card.category === 'Trainer' ? '1' + e.card.trainerType : '2');
   // Value sort needs prices: fetch any missing ones (cached 3 days), then sort again
-  const price = e => Prices.value(Prices.get(e.card.id)) ?? -1;
+  const price = e => Prices.value(Prices.forVersion(e.card.id, e.version)) ?? -1;
   if (sort.startsWith('value')) ensureCollectionPrices();
   list.sort((a, b) => sort === 'qty' ? b.qty - a.qty || a.card.name.localeCompare(b.card.name)
     : sort === 'set' ? a.card.setName.localeCompare(b.card.setName) || (parseInt(a.card.localId) - parseInt(b.card.localId))
@@ -510,8 +620,8 @@ function renderCollection() {
   const counts = { Pokemon: 0, Trainer: 0, Energy: 0 };
   Collection.entries().forEach(e => { counts[e.card.category] = (counts[e.card.category] || 0) + e.qty; });
   const std = Collection.entries().filter(e => e.card.legal.standard).reduce((a, e) => a + e.qty, 0);
-  setStatus($('#collSummary'), total ? `${total} cards (${Collection.entries().length} unique) · ${counts.Pokemon} Pokémon · ${counts.Trainer} Trainers · ${counts.Energy} Energy · ${std} Standard-legal${list.length !== Collection.entries().length ? ` · showing ${list.length}` : ''}` : '');
-  $('#collGrid').innerHTML = list.length ? list.map(e => cardTile(e.card, 'collection')).join('')
+  setStatus($('#collSummary'), total ? `${total} cards (${Collection.entries().length} unique) · ${counts.Pokemon} Pokémon · ${counts.Trainer} Trainers · ${counts.Energy} Energy · ${std} Standard-legal${list.length !== Collection.versionEntries().length ? ` · showing ${list.length}` : ''}` : '');
+  $('#collGrid').innerHTML = list.length ? list.map(e => cardTile(e.card, 'collection', e)).join('')
     : `<div class="empty">${total ? 'No cards match these filters.' : 'Your collection is empty. Add cards from the <b>Add cards</b> tab, or click <b>Load sample</b> to try the deck builder.'}</div>`;
 }
 
@@ -563,7 +673,7 @@ $('#sampleBtn').addEventListener('click', async () => {
       try {
         const cards = await CardDB.searchByName(name, { standardOnly: true, exact: true });
         const card = cards.find(c => c.name === name) || cards.find(c => c.name.toLowerCase() === name.toLowerCase());
-        if (card) Collection.add(card, qty); else missing.push(name);
+        if (card) Collection.add(card, qty, card.versions?.[0]?.key || ''); else missing.push(name);
       } catch (e) { missing.push(name); }
       done++;
       setStatus($('#collSummary'), spin(`Loading sample collection… ${done}/${SAMPLE_COLLECTION.length}`));
@@ -634,7 +744,7 @@ function renderDeck(deck, host, { editable, saved } = {}) {
   const rows = cat => deck.entries.map((e, i) => ({ e, i })).filter(x => x.e.card.category === cat).map(({ e, i }) => {
     const img = cardImage(e.card);
     const roleTag = ['core', 'partner', 'engine'].includes(e.role) ? `<span class="role ${e.role}">${e.role === 'core' ? 'Main' : e.role}</span>` : '';
-    const own = Collection.data.qty[e.card.id];
+    const own = Collection.count(e.card.id);
     return `<div class="deck-row" data-i="${i}">
       <span class="n">${e.count}</span>
       ${img ? `<img loading="lazy" src="${esc(img)}" alt="" data-zoom="${i}">` : `<span class="thumb"></span>`}
@@ -695,7 +805,7 @@ function renderDeck(deck, host, { editable, saved } = {}) {
     if (d) {
       const e2 = deck.entries[+d.closest('.deck-row').dataset.i];
       const delta = +d.dataset.d;
-      const owned = e2.card.virtual ? 99 : (Collection.data.qty[e2.card.id] || 0);
+      const owned = e2.card.virtual ? 99 : Collection.count(e2.card.id);
       if (delta > 0 && e2.count >= owned) return toast(`You only own ${owned} of this printing.`);
       e2.count += delta;
       deckExtras.delete(deck); // matchups/upgrades no longer match the edited list
@@ -882,7 +992,7 @@ function metaDetails(deck, own, reals) {
         <button data-meta-copy>Copy list</button></div>
       <div><h3 class="sub">You're missing ${own.total - own.have} card${own.total - own.have === 1 ? '' : 's'}</h3>
         ${own.missing.length ? `<ul class="missing">${missingRows}</ul>
-          ${r ? `<p><b>About $${cost.toFixed(2)}</b> to complete${unknown ? ` (+${unknown} without a price)` : ''} · TCGplayer market, cheapest printing</p>` : `<button data-meta-prices>Show prices</button>`}` : '<p>You own every card in this list!</p>'}
+          ${r ? `<p><b>About ${Prices.fmt({ usd: cost })}</b> to complete${unknown ? ` (+${unknown} without a price)` : ''} · TCGplayer market, cheapest printing</p>` : `<button data-meta-prices>Show prices</button>`}` : '<p>You own every card in this list!</p>'}
         ${reals.length ? `<h3 class="sub">Real results vs other decks</h3>${reals.map(x => `<div class="simrow mrow"><span>${esc(x.o.name)}</span><div class="simbar"><i style="width:${Math.round(x.r.win * 100)}%;background:${x.r.win >= 0.55 ? 'var(--good)' : x.r.win >= 0.45 ? 'var(--warn)' : 'var(--bad)'}"></i></div><b>${pctS(x.r.win)}</b><small>${x.r.games} games</small></div>`).join('')}` : ''}
       </div>
     </div></div>`;
@@ -929,12 +1039,12 @@ $('#statsBtn').addEventListener('click', () => {
 });
 async function renderStats() {
   const p = $('#statsPanel');
-  const entries = Collection.entries();
+  const entries = Collection.versionEntries(); // per version: a holo and a reverse holo are priced separately
   if (!entries.length) { p.innerHTML = '<div class="panel"><p class="hint">Add some cards first.</p></div>'; return; }
   p.innerHTML = `<div class="panel"><p class="hint">${spin('Loading prices…')}</p></div>`;
   await loadPrices(entries.map(e => e.card.id), (n, t) => { p.innerHTML = `<div class="panel"><p class="hint">${spin(`Loading prices… ${n}/${t}`)}</p></div>`; });
-  const val = e => (Prices.value(Prices.get(e.card.id)) ?? 0);
-  const priced = entries.filter(e => Prices.value(Prices.get(e.card.id)) != null);
+  const val = e => (Prices.value(Prices.forVersion(e.card.id, e.version)) ?? 0);
+  const priced = entries.filter(e => Prices.value(Prices.forVersion(e.card.id, e.version)) != null);
   const total = entries.reduce((a, e) => a + val(e) * e.qty, 0);
   const cards = entries.reduce((a, e) => a + e.qty, 0);
   const top = entries.slice().sort((a, b) => val(b) - val(a)).slice(0, 10);
@@ -962,18 +1072,18 @@ async function renderStats() {
   const rot = entries.filter(e => NEXT_ROTATION.marks.includes(e.card.regulationMark) && e.card.legal.standard).reduce((a, e) => a + e.qty, 0);
   p.innerHTML = `<div class="panel stats">
     <div class="stat-grid four">
-      <div class="stat"><b>$${total.toFixed(2)}</b><small>Estimated collection value</small></div>
-      <div class="stat"><b>${cards}</b><small>Cards (${entries.length} unique)</small></div>
-      <div class="stat"><b>${priced.length ? '$' + (total / cards).toFixed(2) : '—'}</b><small>Average per card</small></div>
+      <div class="stat"><b>${Prices.fmt({ usd: total })}</b><small>Estimated collection value</small></div>
+      <div class="stat"><b>${cards}</b><small>Cards (${Collection.entries().length} unique)</small></div>
+      <div class="stat"><b>${priced.length ? Prices.fmt({ usd: total / cards }) : '—'}</b><small>Average per card</small></div>
       <div class="stat"><b>${rot}</b><small>Cards expected to rotate ${esc(NEXT_ROTATION.when)}</small></div>
     </div>
     <div class="stats-cols">
-      <div><h3 class="sub">Most valuable</h3><ol class="value-list">${top.map(e => `<li><span class="vl-name">${esc(e.card.name)} <small>${esc(e.card.setName)}${e.qty > 1 ? ` ×${e.qty}` : ''}</small></span><span class="price">${Prices.fmt(Prices.get(e.card.id))}</span></li>`).join('')}</ol></div>
+      <div><h3 class="sub">Most valuable</h3><ol class="value-list">${top.map(e => `<li><span class="vl-name">${esc(e.card.name)} <small>${esc(e.card.setName)}${e.version ? ' · ' + esc(versionName(e.card, e.version)) : ''}${e.qty > 1 ? ` ×${e.qty}` : ''}</small></span><span class="price">${Prices.fmt(Prices.forVersion(e.card.id, e.version))}</span></li>`).join('')}</ol></div>
       <div><h3 class="sub">Set completion</h3>${setRows.map(s => `<div class="simrow mrow"><span title="${esc(s.name)}">${esc(s.name)}</span><div class="simbar"><i style="width:${Math.max(2, Math.round(s.pct * 100))}%;background:var(--accent-2)"></i></div><b>${Math.round(s.pct * 100)}%</b><small>${s.nums.size}/${s.total}</small></div>`).join('')}</div>
-      <div><h3 class="sub">Spare copies to trade</h3>${extras.length ? `<ul class="missing">${extras.map(x => `<li>${x.extra}× ${esc(x.name)}<span class="price">$${x.value.toFixed(2)}</span></li>`).join('')}</ul><p class="hint">Copies beyond 4 of a card (you can only play 4).</p>` : '<p class="hint">No spare copies beyond a playset of 4.</p>'}
+      <div><h3 class="sub">Spare copies to trade</h3>${extras.length ? `<ul class="missing">${extras.map(x => `<li>${x.extra}× ${esc(x.name)}<span class="price">${Prices.fmt({ usd: x.value })}</span></li>`).join('')}</ul><p class="hint">Copies beyond 4 of a card (you can only play 4).</p>` : '<p class="hint">No spare copies beyond a playset of 4.</p>'}
         <h3 class="sub">By rarity</h3><div class="legend">${[...rar].sort((a, b) => b[1] - a[1]).map(([r, n]) => `<span style="--c:var(--accent-2)">${n} ${esc(r)}</span>`).join('')}</div></div>
     </div>
-    <p class="hint">Prices are TCGplayer market prices (USD) for the cheapest version of each printing; when TCGplayer has none, the Cardmarket € price is counted as-is. Cached for 3 days. ${entries.length - priced.length ? `${entries.length - priced.length} cards had no price.` : ''}</p>
+    <p class="hint">Prices are for the exact version you own (cards with no version set use the cheapest common one). TCGplayer market prices in US dollars; where TCGplayer has none, the Cardmarket euro price is converted (≈) at today’s ECB rate (€1 = $${Prices.eurToUsd.toFixed(4)}). Cached for 3 days. ${entries.length - priced.length ? `${entries.length - priced.length} cards had no price.` : ''}</p>
   </div>`;
 }
 
@@ -1034,6 +1144,7 @@ $('#results').innerHTML = `<div class="empty getting-started">
 Collection.load();
 updateCount();
 CardDB.loadSets().catch(() => {});
+Prices.loadRate();
 // Open on the tab named in the link (home-screen shortcuts use ?tab=add / ?tab=build), else the last one used
 try {
   const want = new URLSearchParams(location.search).get('tab') || localStorage.getItem('df.tab');
