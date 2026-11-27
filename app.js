@@ -179,15 +179,39 @@ async function startCamera() {
 $('#cameraBtn').addEventListener('click', () => { stopBulk(); startCamera(); });
 function stopCamera() { stopBulk(); if (stream) stream.getTracks().forEach(t => t.stop()); stream = null; $('#scanner').hidden = true; }
 $('#stopCamBtn').addEventListener('click', stopCamera);
-// Crop the camera frame to the card guide area (inset 6% / 18%)
+// The on-screen guide is card-shaped (63 × 88 mm) and sized to the camera frame, which is tall
+// and narrow on a phone held upright and wide on a laptop. The capture crops exactly that box
+// (plus a small margin so the edge finder can tighten it), so the name and number strips land
+// on the card instead of the table above and below it.
+const CARD_RATIO = 88 / 63;
+function guideRect(w, h) {
+  let gh = h * 0.86, gw = gh / CARD_RATIO;
+  if (gw > w * 0.86) { gw = w * 0.86; gh = gw * CARD_RATIO; }
+  return { x: (w - gw) / 2, y: (h - gh) / 2, w: gw, h: gh };
+}
+function placeGuide() {
+  const v = $('#video');
+  if (!v.videoWidth) return;
+  const r = guideRect(v.videoWidth, v.videoHeight);
+  const g = document.querySelector('.card-guide');
+  Object.assign(g.style, {
+    left: (r.x / v.videoWidth * 100) + '%', top: (r.y / v.videoHeight * 100) + '%',
+    width: (r.w / v.videoWidth * 100) + '%', height: (r.h / v.videoHeight * 100) + '%',
+  });
+}
+$('#video').addEventListener('loadedmetadata', placeGuide);
+$('#video').addEventListener('resize', placeGuide);
 function captureFrame() {
   const v = $('#video');
   const w = v.videoWidth, h = v.videoHeight;
   if (!w || !h) return null;
+  const r = guideRect(w, h);
+  const m = 0.04; // margin around the guide
+  const sx = Math.max(0, r.x - r.w * m), sy = Math.max(0, r.y - r.h * m);
+  const sw = Math.min(w - sx, r.w * (1 + 2 * m)), sh = Math.min(h - sy, r.h * (1 + 2 * m));
   const c = document.createElement('canvas');
-  const sx = w * 0.18, sy = h * 0.06, sw = w * 0.64, sh = h * 0.88;
-  c.width = sw; c.height = sh;
-  c.getContext('2d').drawImage(v, sx, sy, sw, sh, 0, 0, sw, sh);
+  c.width = Math.round(sw); c.height = Math.round(sh);
+  c.getContext('2d').drawImage(v, sx, sy, sw, sh, 0, 0, c.width, c.height);
   return c;
 }
 $('#captureBtn').addEventListener('click', () => { const c = captureFrame(); if (c) recognizeCard(c); });
@@ -312,9 +336,9 @@ async function recognizeCard(canvas) {
   $('#results').innerHTML = '';
   try {
     const res = await Scanner.identify(canvas, step => setStatus(status, spin(step)));
-    const what = [res.names[0] && `name "${res.names[0].entry.name}"`, res.num && `number ${res.num.text}`].filter(Boolean).join(', ');
+    const what = [res.readName && `name "${res.readName}"`, res.num && `number ${res.num.text}`].filter(Boolean).join(', ') || 'nothing clear';
     if (!res.results.length) {
-      return setStatus(status, `Couldn't match the card${what ? ' (read ' + esc(what) + ')' : ''}. Fill the frame with the card, avoid glare, or type the set + number.`, true);
+      return setStatus(status, `Couldn't identify the card (read ${esc(what)}). Fill the frame with the card, hold it flat to avoid glare, or type the number from the bottom corner (e.g. 033/103) in Set + number.`, true);
     }
     lastResults = res.results;
     const n = res.results.length;

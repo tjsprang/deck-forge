@@ -77,6 +77,7 @@ const Scanner = {
     const { text } = await this.getWorkers();
     const idx = await this.loadIndex();
     let best = [];
+    const allWords = []; // everything read, used later to pick between printings found by number
     // Different layouts need different reads: normal text mode first, then sparse mode
     // (names floating over artwork), black/white, and inverted (white names on dark V/VMAX bars).
     // Text size matters to the OCR engine, so a couple of passes use a smaller scale.
@@ -86,15 +87,18 @@ const Scanner = {
       const r = await text.recognize(prepCrop(canvas, 0, 0, 1, h, width / canvas.width, variant));
       const words = (r.data.words || []).map(w => ({ t: w.text, h: w.bbox.y1 - w.bbox.y0, conf: w.confidence }))
         .filter(w => /[A-Za-zÀ-ÿ]{2,}/.test(w.t));
+      allWords.push(...words);
       best = mergeMatches(best, matchNames(words, idx));
       if (best[0] && best[0].score > 0.88) break;
     }
+    this.lastWords = allWords;
     if (!best.length || best[0].score < 0.6) {
       // Unusual layout (full art, name lower down): read the whole card; the name is
       // still the biggest text, which matchNames prefers.
       await text.setParameters({ tessedit_pageseg_mode: '11' });
       const r = await text.recognize(prepCrop(canvas, 0, 0, 1, 1, 1000 / canvas.width, 'plain'));
       const words = (r.data.words || []).map(w => ({ t: w.text, h: w.bbox.y1 - w.bbox.y0 })).filter(w => /[A-Za-zÀ-ÿ]{2,}/.test(w.t));
+      allWords.push(...words);
       best = mergeMatches(best, matchNames(words, idx).map(m => ({ ...m, score: m.score - 0.05 })));
     }
     return best.slice(0, 4);
@@ -122,30 +126,53 @@ const Scanner = {
   async identify(photo, onStep = () => {}) {
     onStep('Loading the card list…');
     await Promise.all([this.loadIndex(), CardDB.loadSets()]);
-    const canvas = autoCropCard(photo);
+    const found = locateCard(photo);
+    const canvas = found.canvas;
     onStep('Reading the name…');
     const names = await this.readName(canvas);
     onStep('Reading the card number…');
     const num = await this.readNumber(canvas);
     const idx = this.index;
+    const words = this.lastWords || [];
 
-    // Candidate printings: every printing of the matched names, plus their variants
-    // (Venusaur -> Venusaur EX / Venusaur V / Mega Venusaur ex), because suffix logos
-    // like "EX" or "VSTAR" are stylised and OCR rarely reads them.
+    // 1) A clearly read number WITH its set size ("033/103") is the strongest clue there is:
+    //    it narrows ~20,000 cards to a handful. Pick among those by whatever name text was read
+    //    and by the artwork — even if the name read on its own was wrong.
     let cands = [];
+    let byNumber = false;
+    if (num && num.total) {
+      const pool = [];
+      for (const e of idx.byName.values()) for (const c of e.cards) {
+        if (!sameNumber(c.localId, num.number)) continue;
+        const t = setTotalOf(c.id);
+        const exact = t === num.total;
+        if (exact || closeTotal(t, num.total)) pool.push({ ...c, name: e.name, nameScore: textSupport(e.key, words) + (exact ? 0.15 : 0) });
+      }
+      if (pool.length && pool.length <= 60) { cands = pool; byNumber = true; }
+      // A misread number ("1/129" for 125/197) gives printings the name text doesn't support at
+      // all; if a clear name was read, trust the name instead.
+      const support = Math.max(0, ...pool.map(c => textSupport(normName(c.name), words)));
+      if (byNumber && support < 0.45 && (names[0]?.score || 0) >= 0.7) { cands = []; byNumber = false; }
+    }
+
+    // 2) Otherwise use the name: every printing of a well-read name, plus its variants
+    //    (Venusaur -> Venusaur EX / Venusaur V / Mega Venusaur ex), because suffix logos
+    //    like "EX" or "VSTAR" are stylised and OCR rarely reads them.
     const added = new Set();
     const addEntry = (entry, nameScore) => {
       for (const c of entry.cards) if (!added.has(c.id)) { added.add(c.id); cands.push({ ...c, name: entry.name, nameScore }); }
     };
-    const strongNames = names.filter(n => n.score >= Math.max(0.55, (names[0]?.score || 0) - 0.12));
+    // Without a number, only trust a solid name read — a wrong guess is worse than "try again"
+    const minScore = num ? 0.6 : 0.68;
+    const strongNames = byNumber ? [] : names.filter(n => n.score >= Math.max(minScore, (names[0]?.score || 0) - 0.12));
     for (const n of strongNames) addEntry(n.entry, n.score);
     for (const n of strongNames) {
       const re = new RegExp(`(^|[ '])${n.entry.key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}( |$)`);
       for (const e of idx.byName.values()) if (e !== n.entry && re.test(e.key)) addEntry(e, n.score - 0.1);
     }
 
-    // Number filter (allowing one misread digit in the set total)
-    if (num) {
+    // Number without a readable set size (or no match above): use it to filter the name's printings
+    if (num && !byNumber) {
       const byNum = cands.filter(c => sameNumber(c.localId, num.number));
       const totalOk = c => !num.total || closeTotal(setTotalOf(c.id), num.total);
       const byNumAndTotal = byNum.filter(c => setTotalOf(c.id) === num.total);
@@ -162,7 +189,7 @@ const Scanner = {
         if (pool.length && pool.length <= 60) cands = pool;
       }
     }
-    if (!cands.length) return { names, num, results: [] };
+    if (!cands.length) return { names, num, results: [], cropped: found.method };
 
     // Visual ranking when more than one printing is left
     if (cands.length > 1) {
@@ -181,7 +208,9 @@ const Scanner = {
       });
       const noImg = cands.filter(c => !c.hasImg).map(c => ({ ...c, visual: 0 }));
       cands = [...limited, ...noImg];
-      cands.sort((a, b) => (b.visual + b.nameScore * 0.1) - (a.visual + a.nameScore * 0.1));
+      // Among number matches the name text is real evidence, so it weighs more
+      const w = byNumber ? 0.5 : 0.1;
+      cands.sort((a, b) => (b.visual + b.nameScore * w) - (a.visual + a.nameScore * w));
     }
 
     onStep('Loading card details…');
@@ -195,12 +224,94 @@ const Scanner = {
     // printing backed by a well-read name or a number that matched with its set total.
     const solidName = (names[0]?.score || 0) >= 0.75;
     const numHit = num && top.length === 1 && sameNumber(top[0].localId, num.number);
-    const confident = top.length === 1 ? (solidName || numHit) && full.length === 1
+    let confident = top.length === 1 ? (solidName || numHit) && full.length === 1
       : (top[0].visual != null && top[1] && top[0].visual - top[1].visual > 0.06 && top[0].visual > 0.45);
-    return { names, num, results: full, confident, visual: top.map(c => c.visual) };
+    // Number + set size matched, and the name text clearly agrees with the top pick
+    if (byNumber && top[0].nameScore >= 0.6 && (!top[1] || top[0].nameScore - top[1].nameScore > 0.2)) confident = true;
+    // Report the name that was actually matched (the number path may have overruled the name read)
+    const readName = byNumber ? (top[0].nameScore >= 0.45 ? top[0].name : null) : names[0]?.entry.name;
+    return { names, num, readName, byNumber, results: full, confident, visual: top.map(c => c.visual), cropped: found.method };
   },
   sigCache: new Map(),
 };
+
+// Find the card in a photo or camera frame. Tries, in order:
+//  1. colour: card stands out from a plain background (table, mat);
+//  2. edges: the card's straight borders, for busy backgrounds;
+//  3. shape: the frame is already roughly the card (camera guide) — keep it if card-shaped,
+//     otherwise take the largest centred card-shaped area (people centre the card).
+function locateCard(src) {
+  const byColour = autoCropCard(src);
+  if (byColour !== src) return { canvas: byColour, method: 'colour' };
+  const byEdges = edgeCropCard(src);
+  if (byEdges) return { canvas: byEdges, method: 'edges' };
+  const ratio = src.height / src.width;
+  if (ratio > 1.25 && ratio < 1.55) return { canvas: src, method: 'frame' };
+  let w = src.width, h = w * CARD_RATIO_S;
+  if (h > src.height) { h = src.height; w = h / CARD_RATIO_S; }
+  const out = document.createElement('canvas');
+  out.width = Math.round(w); out.height = Math.round(h);
+  out.getContext('2d').drawImage(src, (src.width - w) / 2, (src.height - h) / 2, w, h, 0, 0, out.width, out.height);
+  return { canvas: out, method: 'centre' };
+}
+const CARD_RATIO_S = 88 / 63;
+
+// Card borders are long straight lines: look for strong vertical/horizontal edge lines whose
+// rectangle has a card's proportions and covers a good part of the picture.
+function edgeCropCard(src) {
+  const W = 300, H = Math.round(W * src.height / src.width);
+  const c = document.createElement('canvas');
+  c.width = W; c.height = H;
+  const ctx = c.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage(src, 0, 0, W, H);
+  const d = ctx.getImageData(0, 0, W, H).data;
+  const g = new Float32Array(W * H);
+  for (let i = 0, p = 0; i < d.length; i += 4, p++) g[p] = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+  // Edge "line" profiles: how much of each column/row is a consistent edge
+  const col = new Float32Array(W), row = new Float32Array(H);
+  for (let y = 1; y < H - 1; y++) for (let x = 1; x < W - 1; x++) {
+    const gx = Math.abs(g[y * W + x + 1] - g[y * W + x - 1]);
+    const gy = Math.abs(g[(y + 1) * W + x] - g[(y - 1) * W + x]);
+    if (gx > 24 && gx > gy * 1.5) col[x]++;
+    if (gy > 24 && gy > gx * 1.5) row[y]++;
+  }
+  const smooth = (a, n) => a.map((_, i) => (a[i - 1] || 0) * 0.5 + a[i] + (a[i + 1] || 0) * 0.5);
+  const cs = smooth(col).map(v => v / H), rs = smooth(row).map(v => v / W);
+  const peaks = (a, from, to) => {
+    const out = [];
+    for (let i = Math.max(1, from); i < Math.min(a.length - 1, to); i++) if (a[i] >= a[i - 1] && a[i] >= a[i + 1] && a[i] > 0.12) out.push({ i, v: a[i] });
+    return out.sort((p, q) => q.v - p.v).slice(0, 6);
+  };
+  const L = peaks(cs, 0, W * 0.5), R = peaks(cs, W * 0.5, W), T = peaks(rs, 0, H * 0.5), B = peaks(rs, H * 0.5, H);
+  let best = null;
+  for (const l of L) for (const r of R) for (const t of T) for (const b of B) {
+    const w = r.i - l.i, h = b.i - t.i;
+    if (w < W * 0.35 || h < H * 0.35) continue;
+    const ratio = h / w;
+    if (ratio < 1.28 || ratio > 1.52) continue;
+    // Strong edges, card-like proportions, and prefer the outer rectangle (the card, not its art box)
+    const s = l.v + r.v + t.v + b.v - Math.abs(ratio - CARD_RATIO_S) * 2 + (w * h) / (W * H) * 0.6;
+    if (!best || s > best.s) best = { s, l: l.i, r: r.i, t: t.i, b: b.i };
+  }
+  if (!best || best.s < 1.2) return null;
+  const k = src.width / W;
+  const out = document.createElement('canvas');
+  out.width = Math.round((best.r - best.l) * k); out.height = Math.round((best.b - best.t) * k);
+  out.getContext('2d').drawImage(src, best.l * k, best.t * k, out.width, out.height, 0, 0, out.width, out.height);
+  return out;
+}
+
+// How well the text that was read supports a given card name (0..1), using every word read.
+function textSupport(key, words) {
+  if (!words.length) return 0;
+  const toks = words.map(w => normName(w.t)).filter(t => t.replace(/[^a-z]/g, '').length >= 2);
+  let best = 0;
+  const n = key.split(' ').length;
+  for (let i = 0; i < toks.length; i++) for (let k = 1; k <= Math.min(4, n + 1) && i + k <= toks.length; k++) {
+    best = Math.max(best, bigramDice(key, toks.slice(i, i + k).join(' ')));
+  }
+  return best;
+}
 
 // Find the card inside a photo (card on a table, or a loose camera crop) and crop to it.
 function autoCropCard(src) {
@@ -318,6 +429,10 @@ function matchNames(words, idx) {
       const s = d * (0.55 + 0.45 * win.size);
       if (s > best) best = s;
     }
+    // Short names ("Bill", "Mary", "Iono") match random OCR noise far too easily: unless the
+    // read is near-perfect, count them for much less.
+    const letters = entry.key.replace(/[^a-z]/g, '').length;
+    if (letters <= 5 && best < 0.92) best *= 0.75;
     // Slight preference for longer, more specific names when equally good ("Charizard ex" over "Charizard")
     return { entry, score: best + Math.min(0.03, entry.key.length / 600) };
   }).filter(x => x.score > 0.45).sort((a, b) => b.score - a.score);
