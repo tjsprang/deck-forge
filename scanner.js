@@ -75,7 +75,7 @@ const Scanner = {
   // The card name is ALWAYS the big text in the top-left corner, on every era of card (the HP
   // and type are top-right, "Evolves from …" is small text above or beside it). So only that
   // area is read — never the attack text, where words like "Energy" would match the wrong card.
-  async readName(canvas) {
+  async readName(canvas, { loose = false } = {}) {
     const { text } = await this.getWorkers();
     const idx = await this.loadIndex();
     let best = [];
@@ -97,6 +97,12 @@ const Scanner = {
       [2, 70, 'invert', '3'], [3, 36, 'plain', '11'], [0, 34, 'plain', '6'], [2, 90, 'plain', '3'],
       [0, 62, 'plain', '6'], [1, 46, 'plain', '11'], [0, 46, 'bw', '6'], [2, 70, 'bw', '3'], [0, 28, 'plain', '7'],
     ];
+    // Card not found exactly in the picture (busy background): it may sit lower in the crop,
+    // so also read a taller band — early, since the tight strips may miss the name entirely.
+    if (loose) {
+      region.push([0, 0.03, 1, 0.27]);
+      passes.splice(2, 0, [4, 46, 'plain', '11'], [4, 46, 'invert', '11'], [4, 60, 'plain', '3']);
+    }
     for (const [ri, target, variant, psm] of passes) {
       const [x, y, w, h] = region[ri];
       await text.setParameters({ tessedit_pageseg_mode: psm });
@@ -111,7 +117,7 @@ const Scanner = {
     return best.slice(0, 4);
   },
 
-  async readNumber(canvas) {
+  async readNumber(canvas, { loose = false } = {}) {
     const { digits } = await this.getWorkers();
     const scale = 2400 / canvas.width;
     // Tight strips around just the number line read far better than a wide strip that also
@@ -121,6 +127,8 @@ const Scanner = {
       [0.6, 0.9, 0.4, 0.08], [0.6, 0.875, 0.4, 0.08],                         // older: bottom-right
       [0, 0.88, 0.55, 0.12], [0.45, 0.88, 0.55, 0.12], [0, 0.84, 1, 0.16],   // wider fallbacks
     ];
+    // Card not found exactly: its bottom edge may sit higher in the crop
+    if (loose) crops.push([0, 0.78, 0.55, 0.14], [0.45, 0.78, 0.55, 0.14], [0, 0.72, 1, 0.2]);
     // A read only counts if its set size is a real set size ("021/103" yes, "621/208" no)
     const totals = new Set((CardDB.sets || []).map(s => s.cardCount?.official).filter(Boolean));
     let fallback = null;
@@ -130,6 +138,13 @@ const Scanner = {
         const num = parseCollectorNumber(r.data.text);
         if (!num) continue;
         if (!num.total || totals.has(num.total)) return num;
+        // The rarity symbol printed right after the number (● common, ◆ uncommon) is often read
+        // as an extra digit: "80/92 ●" -> "80/920". If dropping the last digit gives a real set
+        // size, that's the true reading.
+        const trimmed = Math.floor(num.total / 10);
+        if (num.total >= 100 && totals.has(trimmed) && +num.number <= trimmed + 150) {
+          return { ...num, total: trimmed, text: `${num.number}/${trimmed}` };
+        }
         fallback = fallback || num;
       }
     }
@@ -146,10 +161,11 @@ const Scanner = {
     const found = locateCard(photo);
     const canvas = found.canvas;
     step('name', 'active', 'Reading…', 'Reading the card name…');
-    const names = await this.readName(canvas);
+    const loose = found.method === 'frame' || found.method === 'centre'; // card position uncertain
+    const names = await this.readName(canvas, { loose });
     step('name', names[0] && names[0].score >= 0.6 ? 'done' : 'weak', names[0] && names[0].score >= 0.6 ? names[0].entry.name : 'Not clear — will rely on the number and artwork');
     step('number', 'active', 'Reading…', 'Reading the card number…');
-    const num = await this.readNumber(canvas);
+    const num = await this.readNumber(canvas, { loose });
     step('number', num ? 'done' : 'weak', num ? num.text : 'Not readable');
     step('match', 'active', 'Searching…', 'Finding possible cards…');
     const idx = this.index;
@@ -262,6 +278,8 @@ const Scanner = {
     if (byNumber && top[0].nameScore >= 0.6 && (!top[1] || top[0].nameScore - top[1].nameScore > 0.2)) confident = true;
     // Report the name that was actually matched (the number path may have overruled the name read)
     const readName = byNumber ? (top[0].nameScore >= 0.45 ? top[0].name : null) : names[0]?.entry.name;
+    // The number decided it: show the card it matched, not the shaky name read
+    if (byNumber && confident && names[0]?.entry.name !== full[0].name) step('name', 'done', `${full[0].name} (confirmed by the number)`);
     step('done', confident ? 'done' : 'weak', confident ? `${full[0].name} · ${full[0].setName} ${full[0].localId}` : `${full.length} likely card${full.length === 1 ? '' : 's'} — pick the right one`);
     return { names, num, readName, byNumber, results: full, confident, visual: top.map(c => c.visual), cropped: found.method };
   },
@@ -312,7 +330,8 @@ function edgeCropCard(src) {
   const cs = smooth(col).map(v => v / H), rs = smooth(row).map(v => v / W);
   const peaks = (a, from, to) => {
     const out = [];
-    for (let i = Math.max(1, from); i < Math.min(a.length - 1, to); i++) if (a[i] >= a[i - 1] && a[i] >= a[i + 1] && a[i] > 0.12) out.push({ i, v: a[i] });
+    // (whole-number positions: a fractional start like 209.5 used to miss every row)
+    for (let i = Math.max(1, Math.round(from)); i < Math.min(a.length - 1, Math.round(to)); i++) if (a[i] >= a[i - 1] && a[i] >= a[i + 1] && a[i] > 0.12) out.push({ i, v: a[i] });
     return out.sort((p, q) => q.v - p.v).slice(0, 6);
   };
   const L = peaks(cs, 0, W * 0.5), R = peaks(cs, W * 0.5, W), T = peaks(rs, 0, H * 0.5), B = peaks(rs, H * 0.5, H);
@@ -492,7 +511,9 @@ function mergeMatches(a, b) {
 }
 
 function parseCollectorNumber(raw) {
-  const t = raw.toUpperCase().replace(/[|\]\[]/g, '/').replace(/\s*\/\s*/g, '/');
+  // A rarity symbol separated by a space ("80/92 0") is not part of the number: keep the
+  // gap so the set size stops before it.
+  const t = raw.toUpperCase().replace(/[|\]\[]/g, '/').replace(/\s*\/\s*/g, '/').replace(/[●•◆★☆*]/g, ' ');
   // Fix common OCR swaps inside digit runs
   const fix = s => s.replace(/O/g, '0').replace(/[IL]/g, '1').replace(/S(?=\d)/g, '5');
   // Special subsets: TG05/TG30, GG01/GG70, SV049/SV094, RC12/RC32, H5/H32
