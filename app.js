@@ -311,7 +311,7 @@ $('#cameraBtn').addEventListener('click', () => {
   $('#results').innerHTML = ''; setStatus($('#resultsStatus'), '');
   startCamera().then(ok => { if (ok) $('#scanner').scrollIntoView({ behavior: 'smooth', block: 'start' }); });
 });
-function stopCamera() { if (stream) stream.getTracks().forEach(t => t.stop()); stream = null; $('#scanner').hidden = true; }
+function stopCamera() { stopTracking(); if (stream) stream.getTracks().forEach(t => t.stop()); stream = null; $('#scanner').hidden = true; }
 $('#stopCamBtn').addEventListener('click', stopCamera);
 
 // The viewfinder is a portrait box the camera picture fills (object-fit: cover). The card frame
@@ -357,6 +357,45 @@ function grabFrame() {
   crop.width = Math.round(sw); crop.height = Math.round(sh);
   crop.getContext('2d').drawImage(full, sx, sy, sw, sh, 0, 0, crop.width, crop.height);
   return { full, crop };
+}
+
+// Live card outline: a few times a second, look for the card's edges inside the frame and draw
+// them on the viewfinder (green), so you can see the scanner has picked out the card from a
+// busy background before tapping Capture.
+let trackTimer = null, trackHits = 0, trackMiss = 0;
+function startTracking() {
+  stopTracking();
+  const v = $('#video'), small = document.createElement('canvas');
+  const tick = () => {
+    trackTimer = setTimeout(tick, 280);
+    if (!stream || $('#scanner').hidden || !$('#snapshot').hidden || document.hidden) return;
+    const w = v.videoWidth, h = v.videoHeight;
+    if (!w || !h) return;
+    const r = guideInVideo(w, h), m = 0.03;
+    const sx = Math.max(0, r.x - r.w * m), sy = Math.max(0, r.y - r.h * m);
+    const sw = Math.min(w - sx, r.w * (1 + 2 * m)), sh = Math.min(h - sy, r.h * (1 + 2 * m));
+    small.width = 360; small.height = Math.round(360 * sh / sw);
+    small.getContext('2d').drawImage(v, sx, sy, sw, sh, 0, 0, small.width, small.height);
+    const q = findCardQuad(small, { angles: [-5, -2.5, 0, 2.5, 5] });
+    if (q) { trackHits++; trackMiss = 0; } else { trackMiss++; trackHits = 0; }
+    if (q && trackHits >= 2) drawOutline(quadCorners(small, q).map(([x, y]) => [sx + x * sw / small.width, sy + y * sh / small.height]), w, h);
+    else if (trackMiss >= 2) hideOutline();
+  };
+  tick();
+}
+function stopTracking() { clearTimeout(trackTimer); trackTimer = null; trackHits = trackMiss = 0; hideOutline(); }
+function drawOutline(pts, vw, vh) {
+  const g = viewGuide();
+  const s = Math.max(g.W / vw, g.H / vh), ox = (g.W - vw * s) / 2, oy = (g.H - vh * s) / 2;
+  const svg = $('#cardOutline');
+  svg.setAttribute('viewBox', `0 0 ${g.W} ${g.H}`);
+  svg.querySelector('polygon').setAttribute('points', pts.map(([x, y]) => `${(x * s + ox).toFixed(1)},${(y * s + oy).toFixed(1)}`).join(' '));
+  svg.removeAttribute('hidden'); // (an <svg> has no .hidden property)
+  document.querySelector('.card-guide').classList.add('found');
+}
+function hideOutline() {
+  $('#cardOutline').setAttribute('hidden', '');
+  document.querySelector('.card-guide')?.classList.remove('found');
 }
 
 // How sharp a frame is (variance of the Laplacian): motion blur and focus hunting score low
@@ -500,6 +539,7 @@ function showFrozen(canvasFull, { photo = false } = {}) {
   snap.width = canvasFull.width; snap.height = canvasFull.height;
   snap.getContext('2d').drawImage(canvasFull, 0, 0);
   snap.hidden = false;
+  stopTracking();
   $('#video').pause();
   $('#videoWrap').classList.toggle('photo', photo);
   $('#captureBtn').hidden = true;
@@ -514,7 +554,7 @@ function showFrozen(canvasFull, { photo = false } = {}) {
 function showLive() {
   $('#snapshot').hidden = true;
   $('#videoWrap').classList.remove('photo');
-  if (stream) $('#video').play().catch(() => {});
+  if (stream) { $('#video').play().catch(() => {}); startTracking(); }
   $('#captureBtn').hidden = false;
   $('#scanAgainBtn').hidden = true;
   $('#scanTip').hidden = false;

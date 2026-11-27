@@ -294,8 +294,8 @@ const Scanner = {
 function locateCard(src) {
   const byColour = autoCropCard(src);
   if (byColour !== src) return { canvas: byColour, method: 'colour' };
-  const byEdges = edgeCropCard(src);
-  if (byEdges) return { canvas: byEdges, method: 'edges' };
+  const quad = findCardQuad(src);
+  if (quad) return { canvas: cropQuad(src, quad), method: 'edges', quad };
   const ratio = src.height / src.width;
   if (ratio > 1.25 && ratio < 1.55) return { canvas: src, method: 'frame' };
   let w = src.width, h = w * CARD_RATIO_S;
@@ -307,51 +307,130 @@ function locateCard(src) {
 }
 const CARD_RATIO_S = 88 / 63;
 
-// Card borders are long straight lines: look for strong vertical/horizontal edge lines whose
-// rectangle has a card's proportions and covers a good part of the picture.
-function edgeCropCard(src) {
-  const W = 300, H = Math.round(W * src.height / src.width);
+// Find the card's outline in a busy picture. A cluttered table has plenty of edges, but only the
+// card has four long straight borders that meet in a card-shaped rectangle. So instead of
+// counting edges across the whole picture, every candidate rectangle is checked along its own
+// four sides: what share of each side is actually an edge line. The search also tries small
+// tilts (a hand-held card is rarely perfectly straight).
+// Returns { angle, l, t, r, b, k, score } in a rotated, downscaled frame (see cropQuad), or null.
+function findCardQuad(src, { angles = [-6, -4, -2, 0, 2, 4, 6], minScore = 1.0, areaW = 0.8, nPeaks = 14, minSide = 0.3 } = {}) {
+  const W = 260, H = Math.round(W * src.height / src.width);
+  const k = src.width / W;
   const c = document.createElement('canvas');
   c.width = W; c.height = H;
   const ctx = c.getContext('2d', { willReadFrequently: true });
-  ctx.drawImage(src, 0, 0, W, H);
-  const d = ctx.getImageData(0, 0, W, H).data;
-  const g = new Float32Array(W * H);
-  for (let i = 0, p = 0; i < d.length; i += 4, p++) g[p] = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
-  // Edge "line" profiles: how much of each column/row is a consistent edge
-  const col = new Float32Array(W), row = new Float32Array(H);
-  for (let y = 1; y < H - 1; y++) for (let x = 1; x < W - 1; x++) {
-    const gx = Math.abs(g[y * W + x + 1] - g[y * W + x - 1]);
-    const gy = Math.abs(g[(y + 1) * W + x] - g[(y - 1) * W + x]);
-    if (gx > 24 && gx > gy * 1.5) col[x]++;
-    if (gy > 24 && gy > gx * 1.5) row[y]++;
-  }
-  const smooth = (a, n) => a.map((_, i) => (a[i - 1] || 0) * 0.5 + a[i] + (a[i + 1] || 0) * 0.5);
-  const cs = smooth(col).map(v => v / H), rs = smooth(row).map(v => v / W);
-  const peaks = (a, from, to) => {
-    const out = [];
-    // (whole-number positions: a fractional start like 209.5 used to miss every row)
-    for (let i = Math.max(1, Math.round(from)); i < Math.min(a.length - 1, Math.round(to)); i++) if (a[i] >= a[i - 1] && a[i] >= a[i + 1] && a[i] > 0.12) out.push({ i, v: a[i] });
-    return out.sort((p, q) => q.v - p.v).slice(0, 6);
-  };
-  const L = peaks(cs, 0, W * 0.5), R = peaks(cs, W * 0.5, W), T = peaks(rs, 0, H * 0.5), B = peaks(rs, H * 0.5, H);
   let best = null;
-  for (const l of L) for (const r of R) for (const t of T) for (const b of B) {
-    const w = r.i - l.i, h = b.i - t.i;
-    if (w < W * 0.35 || h < H * 0.35) continue;
-    const ratio = h / w;
-    if (ratio < 1.28 || ratio > 1.52) continue;
-    // Strong edges, card-like proportions, and prefer the outer rectangle (the card, not its art box)
-    const s = l.v + r.v + t.v + b.v - Math.abs(ratio - CARD_RATIO_S) * 2 + (w * h) / (W * H) * 0.6;
-    if (!best || s > best.s) best = { s, l: l.i, r: r.i, t: t.i, b: b.i };
+  for (const angle of angles) {
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.fillStyle = '#808080';
+    ctx.fillRect(0, 0, W, H);
+    ctx.translate(W / 2, H / 2);
+    ctx.rotate(-angle * Math.PI / 180);
+    ctx.drawImage(src, -W / 2, -H / 2, W, H);
+    const d = ctx.getImageData(0, 0, W, H).data;
+    const g = new Float32Array(W * H);
+    for (let i = 0, p = 0; i < d.length; i += 4, p++) g[p] = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+    // Edge maps: V = vertical line pixels, Hz = horizontal line pixels (thickened by a pixel
+    // across the line so a slightly-off side still counts)
+    const V = new Uint8Array(W * H), Hz = new Uint8Array(W * H);
+    // Skip the picture's own border (and, when tilted, the edge of the grey fill around it):
+    // it is a long straight line too, but never the card's
+    const ca = Math.cos(angle * Math.PI / 180), sa = Math.sin(angle * Math.PI / 180), m = 4;
+    const inside = (x, y) => {
+      const dx = x - W / 2, dy = y - H / 2;
+      const ox = W / 2 + dx * ca - dy * sa, oy = H / 2 + dx * sa + dy * ca;
+      return ox > m && ox < W - m && oy > m && oy < H - m;
+    };
+    for (let y = 1; y < H - 1; y++) for (let x = 1; x < W - 1; x++) {
+      if (!inside(x, y)) continue;
+      const p = y * W + x;
+      const gx = Math.abs(g[p + 1] - g[p - 1]), gy = Math.abs(g[p + W] - g[p - W]);
+      if (gx > 18 && gx > gy) V[p] = V[p - 1] = V[p + 1] = 1;
+      if (gy > 18 && gy > gx) Hz[p] = Hz[p - W] = Hz[p + W] = 1;
+    }
+    // Running sums down each column (V) and along each row (Hz) → any side's coverage in O(1)
+    const vc = new Uint16Array(W * (H + 1)), hc = new Uint16Array((W + 1) * H);
+    for (let x = 0; x < W; x++) for (let y = 0; y < H; y++) vc[(y + 1) * W + x] = vc[y * W + x] + V[y * W + x];
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) hc[y * (W + 1) + x + 1] = hc[y * (W + 1) + x] + Hz[y * W + x];
+    const vCov = (x, y0, y1) => (vc[y1 * W + x] - vc[y0 * W + x]) / Math.max(1, y1 - y0);
+    const hCov = (y, x0, x1) => (hc[y * (W + 1) + x1] - hc[y * (W + 1) + x0]) / Math.max(1, x1 - x0);
+    // Candidate lines, judged only over the middle of the picture (where the card's sides run
+    // when it is roughly centred), so clutter above/below or left/right doesn't drown them
+    const colP = new Float32Array(W), rowP = new Float32Array(H);
+    const y0 = Math.round(H * 0.3), y1 = Math.round(H * 0.7), x0 = Math.round(W * 0.3), x1 = Math.round(W * 0.7);
+    for (let x = 0; x < W; x++) colP[x] = vCov(x, y0, y1);
+    for (let y = 0; y < H; y++) rowP[y] = hCov(y, x0, x1);
+    const peaks = (a, from, to) => {
+      const out = [];
+      for (let i = Math.max(1, Math.round(from)); i < Math.min(a.length - 1, Math.round(to)); i++) {
+        if (a[i] >= a[i - 1] && a[i] >= a[i + 1] && a[i] > 0.25) out.push({ i, v: a[i] });
+      }
+      return out.sort((p, q) => q.v - p.v).slice(0, nPeaks);
+    };
+    const L = peaks(colP, 0, W * 0.42), R = peaks(colP, W * 0.58, W), T = peaks(rowP, 0, H * 0.42), B = peaks(rowP, H * 0.58, H);
+    let lb = null;
+    for (const l of L) for (const r of R) {
+      const w = r.i - l.i;
+      if (w < W * 0.4) continue;
+      for (const t of T) for (const b of B) {
+        const h = b.i - t.i;
+        if (h < H * 0.3) continue;
+        const ratio = h / w;
+        if (ratio < 1.25 || ratio > 1.56) continue;
+        // Coverage of each full side (corners trimmed: they are rounded on real cards)
+        const ix = Math.round(w * 0.08), iy = Math.round(h * 0.08);
+        const sides = [vCov(l.i, t.i + iy, b.i - iy), vCov(r.i, t.i + iy, b.i - iy), hCov(t.i, l.i + ix, r.i - ix), hCov(b.i, l.i + ix, r.i - ix)];
+        const weakest = Math.min(...sides);
+        if (weakest < minSide) continue;
+        const mean = (sides[0] + sides[1] + sides[2] + sides[3]) / 4;
+        // Mostly the sides; a bit for card proportions and for being the outer rectangle
+        // (the card, not the inner frame or art box)
+        const s = mean * 0.7 + weakest * 0.3 - Math.abs(ratio - CARD_RATIO_S) * 0.8 + (w * h) / (W * H) * areaW;
+        if (!lb || s > lb.score) lb = { score: s, angle, l: l.i, t: t.i, r: r.i, b: b.i, k, W, H };
+      }
+    }
+    if (!lb) continue;
+    // A card's coloured border has an inner line too, often crisper than the outer one against
+    // a busy table. If a weaker parallel line runs just outside a side, that is the real edge.
+    const w = lb.r - lb.l, h = lb.b - lb.t, ix = Math.round(w * 0.08), iy = Math.round(h * 0.08);
+    const reach = Math.round(w * 0.07);
+    const outward = (cov, at, dir) => {
+      const need = Math.max(0.3, cov(at) * 0.5);
+      let edge = at;
+      for (let n = 1; n <= reach; n++) if (cov(at + dir * n) >= need) edge = at + dir * n;
+      return edge;
+    };
+    const t0 = lb.t + iy, b0 = lb.b - iy, l0 = lb.l + ix, r0 = lb.r - ix;
+    lb.l = outward(x => x > 0 ? vCov(x, t0, b0) : 0, lb.l, -1);
+    lb.r = outward(x => x < W - 1 ? vCov(x, t0, b0) : 0, lb.r, 1);
+    lb.t = outward(y => y > 0 ? hCov(y, l0, r0) : 0, lb.t, -1);
+    lb.b = outward(y => y < H - 1 ? hCov(y, l0, r0) : 0, lb.b, 1);
+    if (!best || lb.score > best.score) best = lb;
   }
-  if (!best || best.s < 1.2) return null;
-  const k = src.width / W;
+  return best && best.score >= minScore ? best : null;
+}
+// Corners of a found card in the original picture's coordinates (for drawing an outline).
+function quadCorners(src, q) {
+  const a = q.angle * Math.PI / 180, cos = Math.cos(a), sin = Math.sin(a);
+  const cx = q.W / 2, cy = q.H / 2;
+  return [[q.l, q.t], [q.r, q.t], [q.r, q.b], [q.l, q.b]].map(([x, y]) => {
+    const dx = x - cx, dy = y - cy;
+    return [(cx + dx * cos - dy * sin) * q.k, (cy + dx * sin + dy * cos) * q.k];
+  });
+}
+// Cut the found card out of the full-resolution picture, straightened.
+function cropQuad(src, q) {
+  const k = q.k;
   const out = document.createElement('canvas');
-  out.width = Math.round((best.r - best.l) * k); out.height = Math.round((best.b - best.t) * k);
-  out.getContext('2d').drawImage(src, best.l * k, best.t * k, out.width, out.height, 0, 0, out.width, out.height);
+  out.width = Math.round((q.r - q.l) * k); out.height = Math.round((q.b - q.t) * k);
+  const x = out.getContext('2d');
+  x.translate(-q.l * k, -q.t * k);
+  x.translate(src.width / 2, src.height / 2);
+  x.rotate(-q.angle * Math.PI / 180);
+  x.drawImage(src, -src.width / 2, -src.height / 2);
   return out;
 }
+
 
 // How well the text that was read supports a given card name (0..1), using every word read.
 function textSupport(key, words) {
