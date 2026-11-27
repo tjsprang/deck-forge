@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Deck Forge</title>
+<meta name="description" content="Log your Pokémon TCG cards and build the best deck from what you own.">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand"><span class="logo">◓</span> Deck Forge <span class="sub">Pokémon TCG deck builder</span></div>
+  <nav class="tabs" id="tabs">
+    <button data-tab="add" class="active">Add cards</button>
+    <button data-tab="collection">Collection <span class="pill" id="collCount">0</span></button>
+    <button data-tab="build">Build deck</button>
+    <button data-tab="saved">Saved decks</button>
+    <button data-tab="meta">Tournament decks</button>
+  </nav>
+</header>
+
+<main>
+  <!-- ADD CARDS -->
+  <section id="tab-add" class="tab active">
+    <div class="add-grid">
+      <div class="panel">
+        <h2>Search by name</h2>
+        <form id="searchForm" class="row">
+          <input id="searchInput" type="search" placeholder="e.g. Charizard ex, Ultra Ball, Iono" autocomplete="off" required>
+          <button class="primary">Search</button>
+        </form>
+        <label class="check"><input type="checkbox" id="standardOnly"> Standard-legal printings only</label>
+      </div>
+      <div class="panel">
+        <h2>Set + number</h2>
+        <form id="numberForm" class="row">
+          <input id="numberInput" placeholder="e.g. OBF 125, sv03 125, or 125/197" autocomplete="off" required>
+          <button class="primary">Find</button>
+        </form>
+        <p class="hint">The number is printed in the bottom corner of every card.</p>
+      </div>
+      <div class="panel">
+        <h2>Scan a card</h2>
+        <div class="row">
+          <button id="cameraBtn" class="primary">Use camera</button>
+          <button id="bulkBtn" title="Keep the camera running and flip through a stack of cards">Bulk scan</button>
+          <label class="btn">Upload photo<input id="photoInput" type="file" accept="image/*" capture="environment" hidden></label>
+        </div>
+        <p class="hint">Works for any era. Fill the frame with the card and avoid glare; it reads the name and number, then compares the artwork to find the exact printing. <b>Bulk scan</b>: hold cards up one at a time — sure matches are added automatically, unsure ones go to a review pile.</p>
+      </div>
+    </div>
+
+    <div id="scanner" class="scanner" hidden>
+      <div class="video-wrap">
+        <video id="video" playsinline muted></video>
+        <div class="card-guide"></div>
+      </div>
+      <div id="bulkStatus" class="bulk-status" hidden></div>
+      <div class="row center">
+        <button id="captureBtn" class="primary">Capture</button>
+        <button id="stopCamBtn">Close camera</button>
+      </div>
+    </div>
+
+    <div id="bulkPanel" class="panel bulk-panel" hidden>
+      <div class="row" style="align-items:center"><h2 style="margin:0">Bulk scan</h2><span class="spacer"></span><span id="bulkCounts" class="hint" style="margin:0"></span></div>
+      <h3 class="sub">Added</h3><div id="bulkAdded" class="bulk-list"></div>
+      <h3 class="sub">Needs review</h3><div id="bulkReview" class="bulk-review"></div>
+    </div>
+
+    <div id="resultsStatus" class="status"></div>
+    <div id="results" class="card-grid"></div>
+  </section>
+
+  <!-- COLLECTION -->
+  <section id="tab-collection" class="tab">
+    <div class="toolbar">
+      <input id="collFilter" type="search" placeholder="Filter your collection…">
+      <select id="collCategory">
+        <option value="">All cards</option><option value="Pokemon">Pokémon</option><option value="Trainer">Trainers</option><option value="Energy">Energy</option>
+      </select>
+      <select id="collLegal">
+        <option value="">Any format</option><option value="standard">Standard legal</option><option value="expanded">Expanded legal</option>
+      </select>
+      <select id="collSort">
+        <option value="name">Sort: name</option><option value="qty">Sort: quantity</option><option value="set">Sort: set</option><option value="type">Sort: type</option>
+      </select>
+      <span class="spacer"></span>
+      <button id="exportBtn">Export</button>
+      <label class="btn">Import<input id="importInput" type="file" accept=".json,application/json" hidden></label>
+      <button id="sampleBtn" title="Load a sample collection so you can try the deck builder">Load sample</button>
+      <button id="statsBtn" class="primary">Value &amp; stats</button>
+    </div>
+    <div id="collSummary" class="status"></div>
+    <div id="statsPanel" hidden></div>
+    <div id="collGrid" class="card-grid"></div>
+  </section>
+
+  <!-- BUILD -->
+  <section id="tab-build" class="tab">
+    <div class="panel build-opts">
+      <div class="field"><label for="fmt">Format</label>
+        <select id="fmt"><option value="standard">Standard</option><option value="expanded">Expanded</option><option value="unlimited">Unlimited (casual)</option></select></div>
+      <div class="field"><label for="focus">Build around (optional)</label>
+        <input id="focus" list="focusList" placeholder="Any Pokémon"><datalist id="focusList"></datalist></div>
+      <div class="field"><label for="etype">Energy type (optional)</label>
+        <select id="etype"><option value="">Any</option><option>Grass</option><option>Fire</option><option>Water</option><option>Lightning</option><option>Psychic</option><option>Fighting</option><option>Darkness</option><option>Metal</option><option>Dragon</option><option>Colorless</option></select></div>
+      <label class="check"><input type="checkbox" id="assumeEnergy" checked> Assume I have basic Energy</label>
+      <button id="generateBtn" class="primary big">Build my best decks</button>
+    </div>
+    <p class="hint">Every deck is built from your whole collection — decks don't use up cards, so your 3 Ultra Balls can go in every deck you build or save.</p>
+    <div id="buildStatus" class="status"></div>
+    <div id="deckTabs" class="deck-tabs"></div>
+    <div id="deckView"></div>
+  </section>
+
+  <!-- SAVED -->
+  <section id="tab-saved" class="tab">
+    <div id="savedList"></div>
+    <div id="savedView"></div>
+  </section>
+
+  <!-- TOURNAMENT DECKS -->
+  <section id="tab-meta" class="tab">
+    <div class="toolbar">
+      <div id="metaInfo" class="hint" style="margin:0;flex:1"></div>
+      <button id="metaRefresh">Refresh</button>
+    </div>
+    <div id="metaStatus" class="status"></div>
+    <div id="metaList"></div>
+  </section>
+</main>
+
+<dialog id="cardModal">
+  <div class="modal-body">
+    <img id="modalImg" alt="">
+    <div id="modalInfo"></div>
+  </div>
+  <form method="dialog"><button class="close">Close</button></form>
+</dialog>
+
+<div id="toast" class="toast"></div>
+
+<script src="cards.js"></script>
+<script src="engine.js"></script>
+<script src="sim.js"></script>
+<script src="sample.js"></script>
+<script src="scanner.js"></script>
+<script src="meta.js"></script>
+<script src="matchup.js"></script>
+<script src="upgrade.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
