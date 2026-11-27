@@ -171,12 +171,23 @@ const Scanner = {
     const idx = this.index;
     const words = this.lastWords || [];
 
+    // 0) Basic Energy has no name printed — just "ENERGY" and a big type symbol (reading it as
+    //    text gave things like "R Energy"). Recognise those by the symbol's colour and shape.
+    let cands = [];
+    let byNumber = false, energy = null;
+    const saysEnergy = words.some(w => bigramDice(normName(w.t).replace(/[^a-z]/g, ''), 'energy') >= 0.72);
+    const strongOther = names[0] && names[0].score >= 0.8 && !BASIC_ENERGY_RE.test(names[0].entry.name) && names[0].entry.key !== 'r energy';
+    // Without a clear name, check for an Energy symbol: leniently if "ENERGY" was read, otherwise
+    // only on a clear colour + symbol match (Pokémon cards score well below that)
+    if (!strongOther) {
+      energy = await this.identifyEnergy(canvas, { num, minScore: saysEnergy ? 0.4 : 0.58, onProgress: t => step('match', 'active', t) });
+      if (energy) cands = energy.cands;
+    }
+
     // 1) A clearly read number WITH its set size ("033/103") is the strongest clue there is:
     //    it narrows ~20,000 cards to a handful. Pick among those by whatever name text was read
     //    and by the artwork — even if the name read on its own was wrong.
-    let cands = [];
-    let byNumber = false;
-    if (num && num.total) {
+    if (!energy && num && num.total) {
       const pool = [];
       for (const e of idx.byName.values()) for (const c of e.cards) {
         if (!sameNumber(c.localId, num.number)) continue;
@@ -200,7 +211,7 @@ const Scanner = {
     };
     // Without a number, only trust a solid name read — a wrong guess is worse than "try again"
     const minScore = num ? 0.6 : 0.68;
-    const strongNames = byNumber ? [] : names.filter(n => n.score >= Math.max(minScore, (names[0]?.score || 0) - 0.12));
+    const strongNames = byNumber || energy ? [] : names.filter(n => n.score >= Math.max(minScore, (names[0]?.score || 0) - 0.12));
     for (const n of strongNames) addEntry(n.entry, n.score);
     for (const n of strongNames) {
       const re = new RegExp(`(^|[ '])${n.entry.key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}( |$)`);
@@ -209,10 +220,10 @@ const Scanner = {
 
     // The set size ("/197") is often read correctly even when the card number's digits aren't —
     // and printings of the same card in other sets (reprints) have different set sizes.
-    if (num?.total && !byNumber) for (const c of cands) c.totalHit = setTotalOf(c.id) === num.total;
+    if (num?.total && !byNumber && !energy) for (const c of cands) c.totalHit = setTotalOf(c.id) === num.total;
 
     // Number without a readable set size (or no match above): use it to filter the name's printings
-    if (num && !byNumber) {
+    if (num && !byNumber && !energy) {
       const byNum = cands.filter(c => sameNumber(c.localId, num.number));
       const totalOk = c => !num.total || closeTotal(setTotalOf(c.id), num.total);
       const byNumAndTotal = byNum.filter(c => setTotalOf(c.id) === num.total);
@@ -236,8 +247,11 @@ const Scanner = {
     const nNames = new Set(cands.map(c => c.name)).size;
     step('match', 'done', `${cands.length} possible printing${cands.length === 1 ? '' : 's'}${nNames > 1 ? ` of ${nNames} cards` : ` of ${cands[0].name}`}${byNumber ? ' (by number)' : ''}`);
 
-    // Visual ranking when more than one printing is left
-    if (cands.length > 1) {
+    // Visual ranking when more than one printing is left (Energy printings are already ranked)
+    if (energy) {
+      step('name', 'done', `${energy.type} Energy (recognised by its symbol)`);
+      step('art', 'done', energy.detail);
+    } else if (cands.length > 1) {
       const MAX = 100;
       cands.sort((a, b) => b.nameScore - a.nameScore);
       const limited = cands.filter(c => c.hasImg).slice(0, MAX);
@@ -276,15 +290,144 @@ const Scanner = {
       : (top[0].visual != null && top[1] && top[0].visual - top[1].visual > 0.06 && top[0].visual > 0.45);
     // Number + set size matched, and the name text clearly agrees with the top pick
     if (byNumber && top[0].nameScore >= 0.6 && (!top[1] || top[0].nameScore - top[1].nameScore > 0.2)) confident = true;
+    if (energy) confident = energy.confident;
     // Report the name that was actually matched (the number path may have overruled the name read)
-    const readName = byNumber ? (top[0].nameScore >= 0.45 ? top[0].name : null) : names[0]?.entry.name;
+    const readName = energy ? top[0].name : byNumber ? (top[0].nameScore >= 0.45 ? top[0].name : null) : names[0]?.entry.name;
     // The number decided it: show the card it matched, not the shaky name read
     if (byNumber && confident && names[0]?.entry.name !== full[0].name) step('name', 'done', `${full[0].name} (confirmed by the number)`);
     step('done', confident ? 'done' : 'weak', confident ? `${full[0].name} · ${full[0].setName} ${full[0].localId}` : `${full.length} likely card${full.length === 1 ? '' : 's'} — pick the right one`);
     return { names, num, readName, byNumber, results: full, confident, visual: top.map(c => c.visual), cropped: found.method };
   },
   sigCache: new Map(),
+
+  // ---------- Basic Energy ----------
+  // Every basic Energy printing that has a picture is a reference: its colours (hue histogram)
+  // and symbol shape. Built once (≈180 small pictures), then kept in storage.
+  async energyRefs(onStep) {
+    if (this._energyRefs) return this._energyRefs;
+    try {
+      const c = JSON.parse(localStorage.getItem('df.energyref.v1') || 'null');
+      if (c && c.refs?.length > 50) return (this._energyRefs = c.refs.map(unpackEnergyFeat));
+    } catch (e) { /* rebuild */ }
+    const idx = await this.loadIndex();
+    const list = [];
+    for (const t of ENERGY_TYPES) for (const name of [`${t} energy`, `basic ${t} energy`]) {
+      for (const c of idx.byName.get(name)?.cards || []) if (c.hasImg) list.push({ id: c.id, type: t[0].toUpperCase() + t.slice(1) });
+    }
+    onStep?.('Learning what Energy cards look like (first time only)…');
+    const refs = [];
+    await mapLimit(list, 8, async r => {
+      const url = cardImageUrl(r.id, 'low');
+      try {
+        const img = await loadImage(url).catch(() => new Promise(res => setTimeout(res, 700)).then(() => loadImage(url)));
+        refs.push({ ...r, ...energyFeatures(img) });
+      } catch (e) { /* skip */ }
+    });
+    if (refs.length > 50) try { localStorage.setItem('df.energyref.v1', JSON.stringify({ at: Date.now(), refs: refs.map(packEnergyFeat) })); } catch (e) { /* memory only */ }
+    return (this._energyRefs = refs);
+  },
+
+  // Which basic Energy is this? Returns ranked printings, or null if it doesn't look like one.
+  async identifyEnergy(canvas, { num, minScore, onProgress }) {
+    const refs = await this.energyRefs(onProgress);
+    if (!refs.length) return null;
+    const f = energyFeatures(canvas);
+    const byId = new Map(), byType = new Map();
+    for (const r of refs) {
+      const v = energySimilarity(f, r);
+      byId.set(r.id, v);
+      if (!byType.has(r.type) || v > byType.get(r.type)) byType.set(r.type, v);
+    }
+    const types = [...byType.entries()].sort((a, b) => b[1] - a[1]);
+    if (!types.length || types[0][1] < minScore) return null;
+    // A close second type is offered too (dim photos can blur Fire/Fighting, Metal/Darkness)
+    const use = types.filter(([, v], i) => i === 0 || (i === 1 && v >= types[0][1] - 0.03));
+    const idx = this.index;
+    const cands = [];
+    for (const [type] of use) {
+      // Printings without a picture (the newest Energy sets) look like the Crown Zenith art
+      const artId = (ENERGY_ART[type] || '').replace(/^.*\/([^/]+)\/([^/]+)$/, '$1-$2');
+      const artV = byId.get(artId) ?? byType.get(type) - 0.03;
+      for (const name of [`${type} Energy`, `Basic ${type} Energy`]) {
+        for (const c of idx.byName.get(normName(name))?.cards || []) {
+          const set = c.id.slice(0, c.id.lastIndexOf('-'));
+          let v = byId.get(c.id);
+          // Newest sets first among look-alikes; trainer-kit printings last
+          if (v == null) v = artV + (set === 'mee' ? 0.004 : set === 'sve' ? 0.003 : /^tk-/.test(set) ? -0.05 : -0.02);
+          if (num && sameNumber(c.localId, num.number) && (!num.total || setTotalOf(c.id) === num.total)) v += 0.1;
+          cands.push({ ...c, name: idx.byName.get(normName(name)).name, nameScore: 0, visual: v });
+        }
+      }
+    }
+    if (!cands.length) return null;
+    cands.sort((a, b) => b.visual - a.visual);
+    const typeLead = types[1] ? types[0][1] - types[1][1] : 1;
+    const confident = !!cands[0].hasImg && typeLead >= 0.05 && (!cands[1] || cands[0].visual - cands[1].visual > 0.04);
+    return {
+      type: types[0][0], cands, confident,
+      detail: use.length > 1 ? `Looks like ${use[0][0]} or ${use[1][0]} Energy` : `${types[0][0]} Energy symbol`,
+    };
+  },
 };
+
+const ENERGY_TYPES = ['grass', 'fire', 'water', 'lightning', 'psychic', 'fighting', 'darkness', 'metal', 'fairy'];
+const BASIC_ENERGY_RE = /^(Basic )?(Grass|Fire|Water|Lightning|Psychic|Fighting|Darkness|Metal|Fairy) Energy$/;
+
+// Energy fingerprint: colours of the middle of the card (hue histogram, light/dark halves) and
+// the shape of the big symbol in the centre. Tested on every basic Energy printing with simulated
+// photo lighting: ~85% right with the card's own picture left out, so other eras' designs count.
+function energyFeatures(src) {
+  const sw = src.width || src.naturalWidth, sh = src.height || src.naturalHeight;
+  const c = document.createElement('canvas');
+  const x = c.getContext('2d', { willReadFrequently: true });
+  // Colours
+  c.width = 40; c.height = 56;
+  x.drawImage(src, sw * 0.12, sh * 0.12, sw * 0.76, sh * 0.76, 0, 0, 40, 56);
+  let d = x.getImageData(0, 0, 40, 56).data;
+  const px = [];
+  for (let i = 0; i < d.length; i += 4) {
+    const r = d[i] / 255, g = d[i + 1] / 255, b = d[i + 2] / 255;
+    const mx = Math.max(r, g, b), mn = Math.min(r, g, b);
+    let h = 0;
+    if (mx !== mn) h = mx === r ? 60 * (((g - b) / (mx - mn)) % 6) : mx === g ? 60 * ((b - r) / (mx - mn) + 2) : 60 * ((r - g) / (mx - mn) + 4);
+    px.push([(h + 360) % 360, (mx + mn) / 2, mx - mn]);
+  }
+  const med = px.map(p => p[1]).sort((a, b) => a - b)[px.length >> 1];
+  const hist = new Array(50).fill(0);
+  for (const p of px) {
+    const light = p[1] > med ? 1 : 0;
+    hist[p[2] > 0.18 ? Math.floor(p[0] / 15) % 24 * 2 + light : 48 + light] += 1 / px.length;
+  }
+  // Symbol shape (gradient directions in the centre)
+  c.width = 16; c.height = 16;
+  x.drawImage(src, sw * 0.2, sh * 0.28, sw * 0.6, sh * 0.43, 0, 0, 16, 16);
+  d = x.getImageData(0, 0, 16, 16).data;
+  const gr = [];
+  for (let i = 0; i < d.length; i += 4) gr.push(0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]);
+  const sym = [];
+  for (let y = 0; y < 16; y++) for (let k = 0; k < 15; k++) sym.push(gr[y * 16 + k] > gr[y * 16 + k + 1] ? 1 : 0);
+  for (let y = 0; y < 15; y++) for (let k = 0; k < 16; k++) sym.push(gr[y * 16 + k] > gr[(y + 1) * 16 + k] ? 1 : 0);
+  return { hist, sym, sig: signature(src) };
+}
+function energySimilarity(a, b) {
+  let h = 0;
+  for (let i = 0; i < 24; i++) for (const l of [0, 1]) {
+    const k = i * 2 + l, kn = (i + 1) % 24 * 2 + l, kp = (i + 23) % 24 * 2 + l;
+    h += Math.min(a.hist[k], b.hist[k] + 0.5 * (b.hist[kn] + b.hist[kp]));
+  }
+  h += Math.min(a.hist[48], b.hist[48]) + Math.min(a.hist[49], b.hist[49]);
+  let same = 0;
+  for (let i = 0; i < a.sym.length; i++) if (a.sym[i] === b.sym[i]) same++;
+  return 0.4 * h + 0.4 * (same / a.sym.length - 0.5) * 2 + 0.2 * visualSimilarity(a.sig, b.sig);
+}
+const bitsToHex = bits => { let s = ''; for (let i = 0; i < bits.length; i += 4) s += ((bits[i] << 3) | (bits[i + 1] << 2) | (bits[i + 2] << 1) | (bits[i + 3] | 0)).toString(16); return s; };
+const hexToBits = (hex, n) => { const out = []; for (const ch of hex) { const v = parseInt(ch, 16); out.push(v >> 3 & 1, v >> 2 & 1, v >> 1 & 1, v & 1); } return out.slice(0, n); };
+function packEnergyFeat(r) {
+  return [r.id, r.type, r.hist.map(v => Math.round(v * 1000)), bitsToHex(r.sym), bitsToHex(r.sig.bits), r.sig.col.map(v => Math.round(v * 100))];
+}
+function unpackEnergyFeat([id, type, hist, sym, bits, col]) {
+  return { id, type, hist: hist.map(v => v / 1000), sym: hexToBits(sym, 480), sig: { bits: hexToBits(bits, 256), col: col.map(v => v / 100) } };
+}
 
 // Find the card in a photo or camera frame. Tries, in order:
 //  1. colour: card stands out from a plain background (table, mat);
