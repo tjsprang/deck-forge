@@ -46,6 +46,13 @@ function badges(card) {
   return `<div class="badges">${b.join('')}</div>`;
 }
 
+// Market price on a tile, once it's been loaded (Collection tab: also the value of all copies)
+function priceTag(card, mode) {
+  const p = Prices.get(card.id);
+  if (Prices.value(p) == null) return '';
+  const qty = Collection.data.qty[card.id] || 0;
+  return `<div class="price-tag">${Prices.fmt(p)}${mode === 'collection' && qty > 1 ? ` <small>× ${qty} = ${Prices.fmt(p, qty)}</small>` : ''}</div>`;
+}
 function cardTile(card, mode) {
   const owned = Collection.data.qty[card.id] || 0;
   const img = cardImage(card);
@@ -56,7 +63,7 @@ function cardTile(card, mode) {
   return `<div class="card" data-id="${esc(card.id)}">
     <div class="img" data-act="zoom">${imgHtml}${owned && mode !== 'collection' ? `<span class="owned">×${owned}</span>` : ''}</div>
     <div class="meta"><div class="name">${esc(card.name)}</div>
-      <div class="set">${esc(card.setName)} · ${esc(card.localId)}${card.setTotal ? '/' + card.setTotal : ''}</div>${badges(card)}</div>
+      <div class="set">${esc(card.setName)} · ${esc(card.localId)}${card.setTotal ? '/' + card.setTotal : ''}</div>${badges(card)}${priceTag(card, mode)}</div>
     <div class="actions">${actions}</div></div>`;
 }
 
@@ -491,9 +498,14 @@ function renderCollection() {
   if (cat) list = list.filter(e => e.card.category === cat);
   if (leg) list = list.filter(e => e.card.legal[leg]);
   const typeKey = e => (e.card.category === 'Pokemon' ? '0' + (e.card.types[0] || '') : e.card.category === 'Trainer' ? '1' + e.card.trainerType : '2');
+  // Value sort needs prices: fetch any missing ones (cached 3 days), then sort again
+  const price = e => Prices.value(Prices.get(e.card.id)) ?? -1;
+  if (sort.startsWith('value')) ensureCollectionPrices();
   list.sort((a, b) => sort === 'qty' ? b.qty - a.qty || a.card.name.localeCompare(b.card.name)
     : sort === 'set' ? a.card.setName.localeCompare(b.card.setName) || (parseInt(a.card.localId) - parseInt(b.card.localId))
     : sort === 'type' ? typeKey(a).localeCompare(typeKey(b)) || a.card.name.localeCompare(b.card.name)
+    : sort === 'value' ? price(b) - price(a) || a.card.name.localeCompare(b.card.name)
+    : sort === 'valueTotal' ? price(b) * b.qty - price(a) * a.qty || a.card.name.localeCompare(b.card.name)
     : a.card.name.localeCompare(b.card.name));
   const counts = { Pokemon: 0, Trainer: 0, Energy: 0 };
   Collection.entries().forEach(e => { counts[e.card.category] = (counts[e.card.category] || 0) + e.qty; });
@@ -501,6 +513,21 @@ function renderCollection() {
   setStatus($('#collSummary'), total ? `${total} cards (${Collection.entries().length} unique) · ${counts.Pokemon} Pokémon · ${counts.Trainer} Trainers · ${counts.Energy} Energy · ${std} Standard-legal${list.length !== Collection.entries().length ? ` · showing ${list.length}` : ''}` : '');
   $('#collGrid').innerHTML = list.length ? list.map(e => cardTile(e.card, 'collection')).join('')
     : `<div class="empty">${total ? 'No cards match these filters.' : 'Your collection is empty. Add cards from the <b>Add cards</b> tab, or click <b>Load sample</b> to try the deck builder.'}</div>`;
+}
+
+// Load prices for any collection cards that don't have one cached, then re-sort
+let pricesLoading = false;
+async function ensureCollectionPrices() {
+  if (pricesLoading) return;
+  const missing = Collection.entries().filter(e => !e.card.virtual && !Prices.get(e.card.id)).map(e => e.card.id);
+  if (!missing.length) return;
+  pricesLoading = true;
+  const sum = $('#collSummary');
+  try {
+    await loadPrices(missing, (n, t) => setStatus(sum, spin(`Loading prices to sort by value… ${n}/${t}`)));
+  } catch (e) { /* show what we have */ }
+  pricesLoading = false;
+  renderCollection();
 }
 
 $('#exportBtn').addEventListener('click', () => {
@@ -941,7 +968,7 @@ async function renderStats() {
       <div class="stat"><b>${rot}</b><small>Cards expected to rotate ${esc(NEXT_ROTATION.when)}</small></div>
     </div>
     <div class="stats-cols">
-      <div><h3 class="sub">Most valuable</h3><ol class="top">${top.map(e => `<li>${esc(e.card.name)} <small>${esc(e.card.setName)}${e.qty > 1 ? ` ×${e.qty}` : ''}</small><span class="price">${Prices.fmt(Prices.get(e.card.id))}</span></li>`).join('')}</ol></div>
+      <div><h3 class="sub">Most valuable</h3><ol class="value-list">${top.map(e => `<li><span class="vl-name">${esc(e.card.name)} <small>${esc(e.card.setName)}${e.qty > 1 ? ` ×${e.qty}` : ''}</small></span><span class="price">${Prices.fmt(Prices.get(e.card.id))}</span></li>`).join('')}</ol></div>
       <div><h3 class="sub">Set completion</h3>${setRows.map(s => `<div class="simrow mrow"><span title="${esc(s.name)}">${esc(s.name)}</span><div class="simbar"><i style="width:${Math.max(2, Math.round(s.pct * 100))}%;background:var(--accent-2)"></i></div><b>${Math.round(s.pct * 100)}%</b><small>${s.nums.size}/${s.total}</small></div>`).join('')}</div>
       <div><h3 class="sub">Spare copies to trade</h3>${extras.length ? `<ul class="missing">${extras.map(x => `<li>${x.extra}× ${esc(x.name)}<span class="price">$${x.value.toFixed(2)}</span></li>`).join('')}</ul><p class="hint">Copies beyond 4 of a card (you can only play 4).</p>` : '<p class="hint">No spare copies beyond a playset of 4.</p>'}
         <h3 class="sub">By rarity</h3><div class="legend">${[...rar].sort((a, b) => b[1] - a[1]).map(([r, n]) => `<span style="--c:var(--accent-2)">${n} ${esc(r)}</span>`).join('')}</div></div>

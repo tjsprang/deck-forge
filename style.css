@@ -379,11 +379,13 @@ textarea.export { width: 100%; height: 160px; font: 12px/1.5 ui-monospace, 'SF M
 .meta-cols, .stats-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 24px; }
 .meta-list { font-size: 13px; margin: 8px 0 12px; column-width: 220px; }
 .meta-list b { display: block; margin-top: 8px; font-size: 11.5px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
-.meta-list small, .missing small, .top small { color: var(--muted); }
-ul.missing, ol.top { padding-left: 18px; margin: 4px 0; font-size: 13px; }
+.meta-list small, .missing small, .value-list small { color: var(--muted); }
+ul.missing, ol.value-list { padding-left: 18px; margin: 4px 0; font-size: 13px; }
 ul.missing li { display: flex; gap: 6px; align-items: baseline; padding: 4px 0; border-bottom: 1px solid var(--line); }
-ol.top li { padding: 4px 0; border-bottom: 1px solid var(--line); }
-ol.top li .price { float: right; }
+ol.value-list { list-style: none; padding-left: 0; counter-reset: vl; }
+ol.value-list li { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; gap: 8px; align-items: baseline; padding: 5px 0; border-bottom: 1px solid var(--line); }
+ol.value-list li::before { counter-increment: vl; content: counter(vl) "."; color: var(--muted); font-variant-numeric: tabular-nums; }
+ol.value-list li .price { white-space: nowrap; }
 .price { margin-left: auto; font-variant-numeric: tabular-nums; color: var(--text); font-weight: 600; }
 
 /* ---------- Collection stats ---------- */
@@ -441,6 +443,9 @@ dialog::backdrop { background: rgba(10, 12, 18, .6); backdrop-filter: blur(3px);
   .add-grid { grid-template-columns: 1fr; gap: 12px; }
   .scan-layout { grid-template-columns: 1fr; gap: 14px; }
   .scanner.panel { padding: 10px; }
+  .stat-grid.four { grid-template-columns: 1fr 1fr; gap: 8px; }
+  .stat-grid.four .stat { padding: 10px 12px; }
+  .stat-grid.four .stat b { font-size: 20px; }
   /* While analysing, a small frozen picture leaves room for the steps and the result */
   .scanner.analysing .video-wrap { width: 46%; margin: 0 auto; }
   .scanner.analysing .card-guide { display: none; }
@@ -464,3 +469,5 @@ dialog::backdrop { background: rgba(10, 12, 18, .6); backdrop-filter: blur(3px);
   .meta-head > button { flex: 1; }
   .own { flex: 1 1 100%; }
 }
+.price-tag { font-weight: 700; font-size: 13px; font-variant-numeric: tabular-nums; color: var(--good); margin-top: 2px; }
+.price-tag small { font-weight: 500; color: var(--muted); }
