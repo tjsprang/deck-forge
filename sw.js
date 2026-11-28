@@ -4,12 +4,12 @@
 //  - Card pictures: cached as you view them, so your collection still shows offline.
 //  - Card database / tournament / price lookups always go to the network (they're live data;
 //    the app keeps its own copies of what it needs in browser storage).
-const VERSION = 'v11'; // bump with the ?v= value in index.html on each release
+const VERSION = 'v12'; // bump with the ?v= value in index.html on each release
 const APP_CACHE = `deck-forge-app-${VERSION}`;
 const IMG_CACHE = 'deck-forge-images';
 const APP_FILES = [
   './', './index.html', './style.css', './manifest.webmanifest',
-  './cards.js', './engine.js', './sim.js', './sample.js', './scanner.js', './meta.js', './matchup.js', './upgrade.js', './app.js',
+  './cards.js', './engine.js', './sim.js', './sample.js', './scanner.js', './meta.js', './matchup.js', './upgrade.js', './history.js', './reports.js', './app.js', './sync.js',
   './icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png',
 ];
 const MAX_IMAGES = 600;
@@ -64,8 +64,8 @@ self.addEventListener('fetch', event => {
     return;
   }
 
-  // Fonts: cache first (they never change)
-  if (url.hostname === 'fonts.googleapis.com' || url.hostname === 'fonts.gstatic.com') {
+  // Fonts and the (version-pinned) sign-in library: cache first (they never change)
+  if (url.hostname === 'fonts.googleapis.com' || url.hostname === 'fonts.gstatic.com' || (url.hostname === 'cdn.jsdelivr.net' && url.pathname.includes('/@supabase/'))) {
     event.respondWith(caches.open(APP_CACHE).then(async c => (await c.match(req)) || fetch(req).then(res => { c.put(req, res.clone()); return res; })));
   }
   // Everything else (card database, tournaments, prices, text reader): straight to the network

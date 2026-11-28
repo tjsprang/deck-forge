@@ -463,7 +463,8 @@ function renderScanResult(res, fromCamera) {
           <small>${esc(o.setName)}<br>${esc(o.localId)}${o.setTotal ? '/' + o.setTotal : ''}</small>
           <button class="primary" data-sr="add"><span>Add</span></button>
         </div>`).join('')}</div>
-      ${others > 2 ? `<button class="sr-others" data-sr="others">See all ${res.results.length} possible matches ↓</button>` : ''}`;
+      <div class="sr-foot">${others > 2 ? `<button class="sr-others" data-sr="others">See all ${res.results.length} possible matches ↓</button>` : ''}
+      <button class="sr-wrong" data-sr="wrong"><svg class="i"><use href="#i-flag"/></svg>None of these? Report it</button></div>`;
     box.hidden = false;
     return;
   }
@@ -482,7 +483,8 @@ function renderScanResult(res, fromCamera) {
       <button class="primary big" data-sr="add"><svg class="i"><use href="#i-add"/></svg><span>Add to collection</span></button>
       ${fromCamera ? `<button class="big" data-sr="addnext"><svg class="i"><use href="#i-camera"/></svg>Add &amp; scan next</button>` : ''}
     </div>
-    ${others ? `<button class="sr-others" data-sr="others">Not this card? See ${others} other possible match${others === 1 ? '' : 'es'} ↓</button>` : ''}`;
+    <div class="sr-foot">${others ? `<button class="sr-others" data-sr="others">Not this card? See ${others} other possible match${others === 1 ? '' : 'es'} ↓</button>` : ''}
+    <button class="sr-wrong" data-sr="wrong"><svg class="i"><use href="#i-flag"/></svg>Wrong card? Report it</button></div>`;
   box.hidden = false;
   // Fill in each version's price once loaded
   if (versions.length > 1) {
@@ -496,6 +498,7 @@ function renderScanResult(res, fromCamera) {
 $('#scanResult').addEventListener('click', e => {
   const b = e.target.closest('[data-sr]');
   if (!b) return;
+  if (b.dataset.sr === 'wrong') return openReport();
   // Which card: a choice tile (when picking between printings) or the single match
   const choice = b.closest('.sr-choice');
   const id = choice ? choice.dataset.id : $('#scanResult').dataset.id;
@@ -614,9 +617,11 @@ async function recognizeCard(canvas, { steps = false, fromCamera = false } = {})
       else setStatus(status, spin(text));
     });
     const what = [res.readName && `name "${res.readName}"`, res.num && `number ${res.num.text}`].filter(Boolean).join(', ') || 'nothing clear';
+    // Remember this scan: cards added from it go in the scan history, and its photo can be reported
+    scanContext = { res, photo: canvas, ids: new Set(res.results.map(c => c.id)), topId: res.results[0]?.id, reported: false };
     if (!res.results.length) {
       if (steps) setStep('done', 'fail', 'Couldn’t identify this card');
-      return setStatus(status, `Couldn't identify the card (read ${esc(what)}). Try again with the card filling the frame and no glare on the number — or type it in the search box, e.g. "Raikou 033/103".`, true);
+      return setStatus(status, `Couldn't identify the card (read ${esc(what)}). Try again with the card filling the frame and no glare on the number — or type it in the search box, e.g. "Raikou 033/103". <button class="small" data-report>Tell the scanner which card it was</button>`, true);
     }
     lastResults = res.results;
     const n = res.results.length;
@@ -635,6 +640,115 @@ async function recognizeCard(canvas, { steps = false, fromCamera = false } = {})
     setStatus(status, esc(err.message), true);
   }
 }
+
+// ---------- Scan history + wrong-scan reports ----------
+let scanContext = null; // the latest scan: { res, photo, ids, topId, reported }
+// Cards added from a scan's results go into the scan history. Adding a different card than the
+// scanner's first pick also quietly saves a report (photo + right answer) to improve the scanner.
+{
+  const add = Collection.add.bind(Collection);
+  Collection.add = (card, n = 1, version = '') => {
+    add(card, n, version);
+    if (n > 0 && scanContext?.ids.has(card.id) && !ScanLog.quiet) {
+      ScanLog.add(card, version, n);
+      renderScanHistory();
+      if (scanContext.topId && card.id !== scanContext.topId && !scanContext.reported) {
+        scanContext.reported = true;
+        ScanReports.save({ kind: 'picked-other', photo: scanContext.photo, res: scanContext.res, correct: card }).catch(() => {});
+      }
+    }
+  };
+}
+const timeAgo = t => { const s = (Date.now() - t) / 1000; return s < 60 ? 'just now' : s < 3600 ? `${Math.round(s / 60)} min ago` : s < 86400 ? `${Math.round(s / 3600)} h ago` : `${Math.round(s / 86400)} d ago`; };
+let historyOpen = false;
+function renderScanHistory() {
+  const box = $('#scanHistory');
+  const list = ScanLog.list();
+  if (!list.length) { box.hidden = true; return; }
+  box.hidden = false;
+  const shown = historyOpen ? list : list.slice(0, 4);
+  box.innerHTML = `<div class="sh-head"><h3 class="sub">Recently scanned</h3><span class="hint">Cards you added from the scanner — undo any mistakes</span></div>
+    <ul class="sh-list">${shown.map(e => {
+      const card = Collection.data.cards[e.cardId];
+      const ver = e.version ? (card ? versionName(card, e.version) : e.version.split('|').filter(Boolean).map(titleCase).join(' · ')) : '';
+      return `<li class="${e.undone ? 'undone' : ''}" data-id="${esc(e.id)}">
+        ${e.img ? `<img src="${esc(e.img)}" alt="" loading="lazy">` : '<span class="sh-noimg"></span>'}
+        <span class="sh-name"><b>${esc(e.name)}${e.n > 1 ? ` ×${e.n}` : ''}</b><small>${esc(e.setName)} · ${esc(e.number)}${ver ? ' · ' + esc(ver) : ''} · ${timeAgo(e.at)}</small></span>
+        ${e.undone ? '<button class="small" data-sh="redo">Add back</button>' : '<button class="small" data-sh="undo"><svg class="i"><use href="#i-undo"/></svg>Undo</button>'}
+      </li>`;
+    }).join('')}</ul>
+    ${list.length > 4 ? `<button class="sr-others" data-sh="more">${historyOpen ? 'Show fewer' : `Show all ${list.length}`}</button>` : ''}`;
+}
+$('#scanHistory').addEventListener('click', e => {
+  const b = e.target.closest('[data-sh]');
+  if (!b) return;
+  if (b.dataset.sh === 'more') { historyOpen = !historyOpen; return renderScanHistory(); }
+  const id = b.closest('li')?.dataset.id;
+  const entry = ScanLog.list().find(x => x.id === id);
+  if (b.dataset.sh === 'undo') {
+    const k = ScanLog.undo(id);
+    toast(k ? `Removed ${entry.name} from your collection` : `${entry.name} was already removed`);
+  } else if (b.dataset.sh === 'redo') {
+    toast(ScanLog.redo(id) ? `Added ${entry.name} back` : 'Couldn’t add it back — search for it instead');
+  }
+  updateCount();
+  renderScanHistory();
+  if ($('#tab-collection').classList.contains('active')) renderCollection();
+});
+
+// "Wrong card?": search for the right one; the photo + answer are saved as a report
+function openReport() {
+  if (!scanContext) return;
+  $('#reportResults').innerHTML = '';
+  $('#reportQuery').value = '';
+  $('#reportDlg').showModal();
+  setTimeout(() => $('#reportQuery').focus(), 50);
+}
+let reportCards = [];
+$('#reportSearch').addEventListener('submit', async e => {
+  e.preventDefault();
+  const q = $('#reportQuery').value.trim();
+  if (!q) return;
+  const out = $('#reportResults');
+  out.innerHTML = `<p class="hint">${spin('Searching…')}</p>`;
+  try {
+    const { cards } = await smartSearch(q);
+    reportCards = cards.slice(0, 30);
+    out.innerHTML = reportCards.length ? reportCards.map(c => `<div class="rp-row" data-id="${esc(c.id)}">
+        ${cardImage(c) ? `<img src="${esc(cardImage(c))}" alt="" loading="lazy">` : '<span class="sh-noimg"></span>'}
+        <span class="sh-name"><b>${esc(c.name)}</b><small>${esc(c.setName)} · ${esc(c.localId)}${c.setTotal ? '/' + c.setTotal : ''}</small></span>
+        <button class="small primary" data-rp="pick">This one</button></div>`).join('')
+      : '<p class="hint">No cards found — try just the name, or the number like 033/103.</p>';
+  } catch (err) { out.innerHTML = `<p class="hint err">Search failed: ${esc(err.message)}</p>`; }
+});
+$('#reportResults').addEventListener('click', async e => {
+  const b = e.target.closest('[data-rp]');
+  if (!b) return;
+  const row = b.closest('.rp-row');
+  const card = reportCards.find(c => c.id === row.dataset.id);
+  if (!card || !scanContext) return;
+  if (b.dataset.rp === 'pick') {
+    b.disabled = true;
+    try {
+      await ScanReports.save({ kind: 'reported', photo: scanContext.photo, res: scanContext.res, correct: card });
+      scanContext.reported = true;
+      row.querySelector('.sh-name small').insertAdjacentHTML('beforeend', ' · <b class="ok-text">Report saved — thanks!</b>');
+      b.outerHTML = '<button class="small" data-rp="add">Add to collection</button>';
+    } catch (err) { b.disabled = false; toast('Couldn’t save the report: ' + err.message); }
+    return;
+  }
+  if (b.dataset.rp === 'add') {
+    // Counts as a scan: goes in the scan history (so it can be undone)
+    scanContext.ids.add(card.id);
+    if (!lastResults.some(c => c.id === card.id)) lastResults.push(card);
+    if (hasChoice(card)) { $('#reportDlg').close(); await openVersionPicker(card); }
+    else { Collection.add(card, 1, card.versions?.[0]?.key || ''); toast(`Added ${card.name} (${card.setName})`); }
+    updateCount();
+    b.textContent = `Added (${Collection.count(card.id)})`;
+  }
+});
+$('#resultsStatus').addEventListener('click', e => { if (e.target.closest('[data-report]')) openReport(); });
+$('#reportDlg').addEventListener('click', e => { if (e.target.id === 'reportDlg') $('#reportDlg').close(); });
 
 // ---------- Collection view ----------
 ['collFilter', 'collCategory', 'collLegal', 'collSort'].forEach(id => $('#' + id).addEventListener('input', renderCollection));
@@ -677,6 +791,7 @@ async function ensureCollectionPrices() {
     await loadPrices(missing, (n, t) => setStatus(sum, spin(`Loading prices to sort by value… ${n}/${t}`)));
   } catch (e) { /* show what we have */ }
   pricesLoading = false;
+  ValueHistory.record(Collection.versionEntries());
   renderCollection();
 }
 
@@ -1083,6 +1198,7 @@ async function renderStats() {
   if (!entries.length) { p.innerHTML = '<div class="panel"><p class="hint">Add some cards first.</p></div>'; return; }
   p.innerHTML = `<div class="panel"><p class="hint">${spin('Loading prices…')}</p></div>`;
   await loadPrices(entries.map(e => e.card.id), (n, t) => { p.innerHTML = `<div class="panel"><p class="hint">${spin(`Loading prices… ${n}/${t}`)}</p></div>`; });
+  ValueHistory.record(entries); // today's point on the value chart
   const val = e => (Prices.value(Prices.forVersion(e.card.id, e.version)) ?? 0);
   const priced = entries.filter(e => Prices.value(Prices.forVersion(e.card.id, e.version)) != null);
   const total = entries.reduce((a, e) => a + val(e) * e.qty, 0);
@@ -1117,6 +1233,7 @@ async function renderStats() {
       <div class="stat"><b>${priced.length ? Prices.fmt({ usd: total / cards }) : '—'}</b><small>Average per card</small></div>
       <div class="stat"><b>${rot}</b><small>Cards expected to rotate ${esc(NEXT_ROTATION.when)}</small></div>
     </div>
+    <div id="valueTrend" class="value-trend">${valueTrendHtml(entries)}</div>
     <div class="stats-cols">
       <div><h3 class="sub">Most valuable</h3><ol class="value-list">${top.map(e => `<li><span class="vl-name">${esc(e.card.name)} <small>${esc(e.card.setName)}${e.version ? ' · ' + esc(versionName(e.card, e.version)) : ''}${e.qty > 1 ? ` ×${e.qty}` : ''}</small></span><span class="price">${Prices.fmt(Prices.forVersion(e.card.id, e.version))}</span></li>`).join('')}</ol></div>
       <div><h3 class="sub">Set completion</h3>${setRows.map(s => `<div class="simrow mrow"><span title="${esc(s.name)}">${esc(s.name)}</span><div class="simbar"><i style="width:${Math.max(2, Math.round(s.pct * 100))}%;background:var(--accent-2)"></i></div><b>${Math.round(s.pct * 100)}%</b><small>${s.nums.size}/${s.total}</small></div>`).join('')}</div>
@@ -1126,6 +1243,63 @@ async function renderStats() {
     <p class="hint">Prices are for the exact version you own (cards with no version set use the cheapest common one). TCGplayer market prices in US dollars; where TCGplayer has none, the Cardmarket euro price is converted (≈) at today’s ECB rate (€1 = $${Prices.eurToUsd.toFixed(4)}). Cached for 3 days. ${entries.length - priced.length ? `${entries.length - priced.length} cards had no price.` : ''}</p>
   </div>`;
 }
+
+// ---------- Value over time ----------
+let valueRange = 30;
+const money = c => '$' + (c / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const shortDay = d => new Date(d + 'T12:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+function valueTrendHtml(entries) {
+  const all = ValueHistory.load().value;
+  const since = new Date(Date.now() - valueRange * 864e5).toISOString().slice(0, 10);
+  const pts = valueRange >= 3650 ? all : all.filter(p => p[0] >= since);
+  const ranges = [[7, '7 days'], [30, '30 days'], [90, '90 days'], [3650, 'All']];
+  const head = `<div class="vt-head"><h3 class="sub">Value over time</h3>
+    <div class="seg">${ranges.map(([d, l]) => `<button data-range="${d}" class="${d === valueRange ? 'on' : ''}">${l}</button>`).join('')}</div></div>`;
+  let chart;
+  if (pts.length < 2) {
+    chart = `<p class="hint">Your collection’s value is saved once a day, whenever you open <b>Value &amp; stats</b> or sort your cards by value. The chart starts once there are two days${all.length === 1 ? ` — first point saved ${shortDay(all[0][0])}: ${money(all[0][1])}` : ''}.</p>`;
+  } else {
+    const W = 600, H = 150, pad = 4;
+    const t0 = Date.parse(pts[0][0]), t1 = Date.parse(pts[pts.length - 1][0]);
+    const vals = pts.map(p => p[1]);
+    let lo = Math.min(...vals), hi = Math.max(...vals);
+    if (hi - lo < hi * 0.02) { lo -= hi * 0.01 + 1; hi += hi * 0.01 + 1; }
+    const x = p => pad + (Date.parse(p[0]) - t0) / Math.max(1, t1 - t0) * (W - 2 * pad);
+    const y = p => pad + (1 - (p[1] - lo) / (hi - lo)) * (H - 2 * pad);
+    const line = pts.map((p, i) => `${i ? 'L' : 'M'}${x(p).toFixed(1)},${y(p).toFixed(1)}`).join('');
+    const first = pts[0][1], last = pts[pts.length - 1][1], diff = last - first;
+    chart = `<div class="vt-summary"><b>${money(last)}</b><span class="${diff >= 0 ? 'up' : 'down'}">${diff >= 0 ? '▲' : '▼'} ${money(Math.abs(diff))}${first ? ` (${(diff / first * 100).toFixed(1)}%)` : ''}</span><small>since ${shortDay(pts[0][0])}</small></div>
+      <svg class="vt-chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="Collection value from ${money(first)} to ${money(last)}">
+        <path class="vt-area" d="${line}L${x(pts[pts.length - 1]).toFixed(1)},${H}L${x(pts[0]).toFixed(1)},${H}Z"/>
+        <path class="vt-line" d="${line}"/>      </svg>
+      <div class="vt-axis"><span>${shortDay(pts[0][0])}</span><span>${money(lo)} – ${money(hi)}</span><span>${shortDay(pts[pts.length - 1][0])}</span></div>`;
+  }
+  // Biggest movers: change in price per copy since the start of the range, × copies owned
+  const mv = ValueHistory.movers(entries, valueRange);
+  const row = m => `<li><span class="vl-name">${esc(m.e.card.name)} <small>${esc(m.e.card.setName)}${m.e.version ? ' · ' + esc(versionName(m.e.card, m.e.version)) : ''}${m.e.qty > 1 ? ` ×${m.e.qty}` : ''}</small></span>
+    <span class="price ${m.change > 0 ? 'up' : 'down'}">${m.change > 0 ? '+' : '−'}${money(Math.abs(m.total) * 100)}${m.pct != null ? ` <small>${m.change > 0 ? '+' : ''}${(m.pct * 100).toFixed(0)}%</small>` : ''}</span></li>`;
+  const movers = mv.up.length || mv.down.length
+    ? `<div class="movers"><div><h3 class="sub">Rising</h3>${mv.up.length ? `<ol class="value-list">${mv.up.map(row).join('')}</ol>` : '<p class="hint">Nothing went up.</p>'}</div>
+        <div><h3 class="sub">Falling</h3>${mv.down.length ? `<ol class="value-list">${mv.down.map(row).join('')}</ol>` : '<p class="hint">Nothing went down.</p>'}</div></div>`
+    : (all.length >= 2 ? '<p class="hint">No price changes in this period yet.</p>' : '');
+  return head + chart + movers;
+}
+$('#statsPanel').addEventListener('click', e => {
+  const b = e.target.closest('[data-range]');
+  if (!b) return;
+  valueRange = +b.dataset.range;
+  const el = $('#valueTrend');
+  if (el) el.innerHTML = valueTrendHtml(Collection.versionEntries());
+});
+
+// After the online backup brought in changes from another device (or restored a copy)
+window.onSyncedData = () => {
+  updateCount();
+  renderScanHistory();
+  if ($('#tab-collection').classList.contains('active')) renderCollection();
+  if ($('#tab-saved').classList.contains('active')) renderSaved();
+  if (!$('#statsPanel').hidden) { const el = $('#valueTrend'); if (el) el.innerHTML = valueTrendHtml(Collection.versionEntries()); }
+};
 
 // ---------- Light / dark switch ----------
 function currentTheme() {
@@ -1183,6 +1357,9 @@ $('#results').innerHTML = `<div class="empty getting-started">
 // ---------- Init ----------
 Collection.load();
 updateCount();
+renderScanHistory();
+// Today's value point, from prices already saved on this device (no downloads)
+setTimeout(() => { try { ValueHistory.record(Collection.versionEntries()); } catch (e) { /* ignore */ } }, 1500);
 CardDB.loadSets().catch(() => {});
 Prices.loadRate();
 // Open on the tab named in the link (home-screen shortcuts use ?tab=add / ?tab=build), else the last one used

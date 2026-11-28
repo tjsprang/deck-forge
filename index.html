@@ -19,7 +19,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=20261128c">
+<link rel="stylesheet" href="style.css?v=20261128d">
 <script>
   // Apply the saved light/dark choice before the page paints
   try { const t = localStorage.getItem('df.theme'); if (t) document.documentElement.dataset.theme = t; } catch (e) { /* ignore */ }
@@ -49,6 +49,9 @@
   <symbol id="i-moon" viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></symbol>
   <symbol id="i-box" viewBox="0 0 24 24"><path d="m21 8-9-5-9 5 9 5zM3 8v8l9 5 9-5V8M12 13v8"/></symbol>
   <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+  <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></symbol>
+  <symbol id="i-undo" viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-3"/></symbol>
+  <symbol id="i-flag" viewBox="0 0 24 24"><path d="M4 22V4M4 4h13l-2 4 2 4H4"/></symbol>
 </svg>
 
 <header class="top">
@@ -65,6 +68,7 @@
       <button data-tab="meta"><svg class="i"><use href="#i-trophy"/></svg><span class="l-long">Tournament decks</span><span class="l-short">Meta</span></button>
     </nav>
     <button id="installBtn" class="install-btn" hidden><svg class="i"><use href="#i-download"/></svg><span>Install</span></button>
+    <button id="accountBtn" class="icon-btn account-btn" data-state="out" title="Back up your cards (sign in)" aria-label="Account and online backup"><svg class="i"><use href="#i-user"/></svg></button>
     <button id="themeBtn" class="icon-btn" title="Switch light / dark" aria-label="Switch light or dark theme"><svg class="i"><use href="#i-moon"/></svg></button>
   </div>
 </header>
@@ -130,6 +134,9 @@
       </div>
     </div>
 
+
+    <!-- Cards added from scans, newest first, with undo -->
+    <div id="scanHistory" class="panel scan-history" hidden></div>
     <div id="resultsStatus" class="status"></div>
     <div id="results" class="card-grid"></div>
   </section>
@@ -229,16 +236,33 @@
   <p class="hint">On iPhone this only works in Safari. Your cards stay on your phone.</p>
 </dialog>
 
+
+<dialog id="accountDlg" class="account-dlg">
+  <form method="dialog" class="modal-close"><button class="icon-btn" aria-label="Close"><svg class="i"><use href="#i-x"/></svg></button></form>
+  <div id="acctBody"></div>
+</dialog>
+
+<dialog id="reportDlg" class="report-dlg">
+  <form method="dialog" class="modal-close"><button class="icon-btn" aria-label="Close"><svg class="i"><use href="#i-x"/></svg></button></form>
+  <h3>Which card is it really?</h3>
+  <p class="hint">Search for the right card. The photo and your answer are saved to help improve the scanner — nothing is added to your collection unless you tap Add.</p>
+  <form id="reportSearch" class="row"><input id="reportQuery" type="search" placeholder="Name and number, e.g. Metal Energy or Raikou 033" autocomplete="off"><button class="primary">Search</button></form>
+  <div id="reportResults" class="report-results"></div>
+</dialog>
 <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
-<script src="cards.js?v=20261128c"></script>
-<script src="engine.js?v=20261128c"></script>
-<script src="sim.js?v=20261128c"></script>
-<script src="sample.js?v=20261128c"></script>
-<script src="scanner.js?v=20261128c"></script>
-<script src="meta.js?v=20261128c"></script>
-<script src="matchup.js?v=20261128c"></script>
-<script src="upgrade.js?v=20261128c"></script>
-<script src="app.js?v=20261128c"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script src="cards.js?v=20261128d"></script>
+<script src="engine.js?v=20261128d"></script>
+<script src="sim.js?v=20261128d"></script>
+<script src="sample.js?v=20261128d"></script>
+<script src="scanner.js?v=20261128d"></script>
+<script src="meta.js?v=20261128d"></script>
+<script src="matchup.js?v=20261128d"></script>
+<script src="upgrade.js?v=20261128d"></script>
+<script src="history.js?v=20261128d"></script>
+<script src="reports.js?v=20261128d"></script>
+<script src="app.js?v=20261128d"></script>
+<script src="sync.js?v=20261128d"></script>
 </body>
 </html>
