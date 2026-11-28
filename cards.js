@@ -147,8 +147,22 @@ const ENERGY_ART = {
   Fairy: 'sm/sm1/172',
 };
 
+// Basic Energy printings with no picture in the card database, but with a TCGplayer product
+// photo (TCGplayer product id, taken from the card database's own TCGplayer links). Without
+// these, every Scarlet & Violet / Mega Evolution Energy showed the same borrowed picture.
+const ENERGY_PHOTOS = {"mee-001":656263,"mee-002":656264,"mee-003":656265,"mee-004":656266,"mee-005":656267,"mee-006":656268,"mee-007":656269,"mee-008":656270,"mee-009":713248,"mee-010":713249,"mee-011":713250,"mee-012":713251,"mee-013":713252,"mee-014":713253,"mee-015":713254,"mee-016":713255,"mfb-8":524038,"mfb-16":524039,"mfb-24":524040,"mfb-32":524041,"sve-001":475425,"sve-002":475426,"sve-003":475427,"sve-004":475428,"sve-005":475429,"sve-006":475430,"sve-007":475431,"sve-008":475432,"sve-009":578864,"sve-010":578863,"sve-011":578862,"sve-012":578866,"sve-013":578865,"sve-014":578867,"sve-015":578868,"sve-016":578869,"sve-017":645286,"sve-018":645287,"sve-019":645288,"sve-020":645289,"sve-021":645301,"sve-022":645302,"sve-023":645303,"sve-024":645304,"tk-bw-e-2":98672,"tk-bw-e-3":98673,"tk-bw-e-5":98674,"tk-bw-e-6":98675,"tk-bw-e-7":98676,"tk-bw-e-8":98677,"tk-bw-e-9":98678,"tk-bw-e-10":98679,"tk-bw-e-20":98680,"tk-bw-e-22":98681,"tk-bw-e-26":98682,"tk-bw-e-28":98683,"tk-bw-z-3":98718,"tk-bw-z-5":98719,"tk-bw-z-6":98720,"tk-bw-z-7":98721,"tk-bw-z-8":98722,"tk-bw-z-9":98723,"tk-bw-z-10":98724,"tk-bw-z-20":98725,"tk-bw-z-22":98726,"tk-bw-z-24":98727,"tk-bw-z-26":98728,"tk-bw-z-28":98729,"tk-dp-l-11":85443,"tk-dp-m-12":90511,"tk-ex-latia-10":85457,"tk-ex-latio-10":86760,"tk-ex-m-11":85460,"tk-ex-m-12":86764,"tk-ex-p-11":86763,"tk-ex-p-12":88420,"tk-hs-g-2":90513,"tk-hs-g-3":90514,"tk-hs-g-4":90515,"tk-hs-g-6":90516,"tk-hs-g-7":90517,"tk-hs-g-8":90518,"tk-hs-g-9":90519,"tk-hs-g-10":90520,"tk-hs-g-11":90521,"tk-hs-g-16":90522,"tk-hs-g-26":90523,"tk-hs-g-29":90524,"tk-hs-r-5":86769,"tk-hs-r-6":86770,"tk-hs-r-7":86771,"tk-hs-r-8":86772,"tk-hs-r-9":86773,"tk-hs-r-10":86774,"tk-hs-r-11":86775,"tk-hs-r-14":86776,"tk-hs-r-15":86777,"tk-hs-r-18":86778,"tk-hs-r-23":86779,"tk-hs-r-28":86780};
+
+// The picture is a stand-in (another printing's art), not this exact card
+// (backfill() borrows another printing's picture for cards without one: card.imageFrom)
+function isStandInImage(card) {
+  if (ENERGY_PHOTOS[card.id]) return false;
+  return card.image ? !!card.imageFrom && card.imageFrom !== card.id : !!cardImage(card);
+}
+
 function cardImage(card, size = 'low') {
-  if (card.image) return `${card.image}/${size}.webp`;
+  const tp = ENERGY_PHOTOS[card.id]; // a real photo beats a borrowed picture
+  if (card.image && !(tp && card.imageFrom)) return `${card.image}/${size}.webp`;
+  if (tp) return `https://tcgplayer-cdn.tcgplayer.com/product/${tp}_${size === 'high' ? 'in_1000x1000' : '400w'}.jpg`;
   if (card.category === 'Energy') {
     const m = card.name.match(/^(?:Basic )?(Grass|Fire|Water|Lightning|Psychic|Fighting|Darkness|Metal|Fairy) Energy$/);
     const type = m ? m[1] : (!card.effect && card.types?.[0]);

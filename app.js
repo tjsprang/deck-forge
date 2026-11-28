@@ -60,7 +60,7 @@ const versionName = (card, key) => key ? (versionOf(card, key)?.label || key.spl
 function cardTile(card, mode, entry = null) {
   const owned = Collection.count(card.id);
   const img = cardImage(card);
-  const imgHtml = img ? `<img loading="lazy" src="${esc(img)}" alt="${esc(card.name)}">` : `<div class="noimg">${esc(card.name)}<br>(no image)</div>`;
+  const imgHtml = (img ? `<img loading="lazy" src="${esc(img)}" alt="${esc(card.name)}">` : `<div class="noimg">${esc(card.name)}<br>(no image)</div>`) + imgTags(card);
   let actions, versionLine = '';
   if (mode === 'collection') {
     const q = entry ? entry.qty : owned;
@@ -82,6 +82,18 @@ function cardTile(card, mode, entry = null) {
     <div class="meta"><div class="name">${esc(card.name)}</div>
       <div class="set">${esc(card.setName)} · ${esc(card.localId)}${card.setTotal ? '/' + card.setTotal : ''}</div>${versionLine}${badges(card)}${priceTag(card, mode, entry?.version || '', qtyForPrice)}</div>
     <div class="actions">${actions}</div></div>`;
+}
+
+// Basic Energy is reprinted in dozens of sets that look alike: put the set and number on the
+// picture itself, and say when the picture is only a similar printing's art.
+function shortSetName(card) {
+  const code = CardDB.setCode(card.setId || '');
+  return /^[A-Z0-9]{2,5}$/.test(code) ? code : (card.setName || '').replace(/ trainer Kit/i, ' Kit');
+}
+function imgTags(card) {
+  if (!isBasicEnergy(card)) return '';
+  return `<span class="img-tag">${esc(shortSetName(card))} · ${esc(card.localId)}</span>`
+    + (isStandInImage(card) ? '<span class="img-standin">Similar picture</span>' : '');
 }
 
 function findCard(id) { return Collection.data.cards[id] || lastResults.find(c => c.id === id) || null; }
@@ -458,7 +470,7 @@ function renderScanResult(res, fromCamera) {
       <span class="sr-label check">Which one is it? Compare the set symbol and number</span>
       <div class="sr-choices">${opts.map(o => `
         <div class="sr-choice" data-id="${esc(o.id)}">
-          ${cardImage(o) ? `<img src="${esc(cardImage(o))}" alt="" data-sr="zoom">` : ''}
+          ${cardImage(o) ? `<div class="sr-img"><img src="${esc(cardImage(o))}" alt="" data-sr="zoom">${imgTags(o)}</div>` : ''}
           <b>${esc(o.name)}</b>
           <small>${esc(o.setName)}<br>${esc(o.localId)}${o.setTotal ? '/' + o.setTotal : ''}</small>
           <button class="primary" data-sr="add"><span>Add</span></button>
